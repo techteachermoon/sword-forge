@@ -2125,7 +2125,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 12; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 13; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2254,6 +2254,7 @@ function mpTarget(m){
 }
 // effects travel with every message: new blasts, bolts, pillars, casts, fire fields, thrown blades and swings.
 // What arrives is only drawn (rm): it never hits anything here, the damage already went through the host.
+function mpSwingOut(){ const sw = B.swing; if(!B.mp || !sw) return; const f2 = v => Math.round(v * 100) / 100; MP.ev = MP.ev || []; MP.ev.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), Math.round(sw.R), f2(sw.dur), sw.spins || 1]); }
 function mpFxOut(){
   const out = [], r = Math.round, f2 = v => Math.round(v * 100) / 100;
   for(const b of B.blasts) if(!b._n && !b.rm){ b._n = 1; out.push(['b', r(b.x), r(b.y), r(b.r), (b.magic ? 1 : 0) | (b.quake ? 2 : 0)]); }
@@ -2261,11 +2262,12 @@ function mpFxOut(){
   for(const q of B.pillars) if(!q._n && !q.rm){ q._n = 1; out.push(['p', r(q.x), r(q.y)]); }
   for(const c of B.casts || []) if(!c._n && !c.rm){ c._n = 1; out.push(['c', r(c.x0), r(c.y0), r(c.x), r(c.y), f2(c.dur)]); }
   for(const q of B.fields) if(!q._n && !q.rm){ q._n = 1; out.push(['f', r(q.x), r(q.y), r(q.r), f2(q.t)]); }
-  for(const q of B.shots) if(!q._n && !q.rm){ q._n = 1; out.push(['s', r(q.x), r(q.y), r(q.vx), r(q.vy), (q.dag ? 1 : 0) | (q.big ? 2 : 0), f2(q.life), f2(q.a || 0), q.pierce || 0]); }
-  const sw = B.swing; if(sw && !sw._n){ sw._n = 1; out.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), r(sw.R), f2(sw.dur), sw.spins || 1]); }
-  if(MP.dn && MP.dn.length){ out.push(...MP.dn.splice(0, 25)); }
-  if(MP.ev && MP.ev.length) out.push(...MP.ev.splice(0));
-  return out.length > 70 ? out.slice(-70) : out;
+  const shots = [];
+  for(const q of B.shots) if(!q._n && !q.rm){ q._n = 1; shots.push(['s', r(q.x), r(q.y), r(q.vx), r(q.vy), (q.dag ? 1 : 0) | (q.big ? 2 : 0), f2(q.life), f2(q.a || 0), q.pierce || 0]); }
+  if(MP.ev && MP.ev.length) out.push(...MP.ev.splice(0)); // swings, rolls, the special, field events: every one goes
+  out.push(...shots.slice(-30));
+  if(MP.dn && MP.dn.length){ out.push(...MP.dn.slice(-20)); MP.dn.length = 0; } // numbers: the newest 20
+  return out;
 }
 function mpFxIn(o, fx){
   if(!B || !Array.isArray(fx) || o.n !== B.n) return; const col = (WL[o.ln] || WL.c).col;
@@ -2276,7 +2278,7 @@ function mpFxIn(o, fx){
     else if(k === 'c'){ B.casts = B.casts || []; B.casts.push({ x0: e[1], y0: e[2], x: e[3], y: e[4], t: 0, dur: e[5] || .2, col, rm: 1 }); }
     else if(k === 'f') B.fields.push({ x: e[1], y: e[2], r: e[3], t: e[4], tick: .5, rm: 1 });
     else if(k === 's'){ if(B.shots.length < 160) B.shots.push({ x: e[1], y: e[2], vx: e[3], vy: e[4], dag: !!(e[5] & 1), big: !!(e[5] & 2), life: e[6], a: e[7], hit: new Set(), pierce: e[8] || 0, col, rm: 1 }); }
-    else if(k === 'w' && Array.isArray(e[1])) o.sw = { arcs: e[1], R: e[2], dur: e[3] || .15, spins: e[4] || 1, t: 0 };
+    else if(k === 'w' && Array.isArray(e[1])){ (o.swq = o.swq || []).push({ arcs: e[1], R: e[2], dur: e[3] || .15, spins: e[4] || 1, t: 0 }); if(o.swq.length > 4) o.swq.shift(); }
     else if(k === 'd'){ const crit = !!(e[4] & 1); B.nums.push({ x: e[1] + (Math.random() - .5) * 8, y: e[2], v: fmtK(e[3]), crit, t: 0, c: e[5] || (crit ? '#ffe070' : null), small: !!(e[4] & 2), dn: 1 });
       if(!(e[4] & 2) && GQ()){ B.hits = B.hits || []; if(B.hits.length < 48) B.hits.push({ x: e[1], y: e[2] + 6, t: 0, crit, c: crit ? '#ffe070' : '#ffffff', a: Math.random() * 3.14 }); if(crit){ B.stars = B.stars || []; B.stars.push({ x: e[1], y: e[2] + 6, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } } }
     else if(k === 'g') o.dashT = .18;
@@ -2336,6 +2338,7 @@ function mpTick(dt){
   if(!B || !B.mp) return;
   for(const id in MP.peers){ const o = MP.peers[id]; if(G.t - o.seen > 5){ delete MP.peers[id]; continue; }
     if(o.sw) o.sw.t += dt;
+    if((!o.sw || o.sw.t >= o.sw.dur) && o.swq && o.swq.length) o.sw = o.swq.shift(); // swings play one after another, none skipped
     if(o.dashT > 0){ o.dashT -= dt; (o.ghosts = o.ghosts || []).push({ x: o.dx, y: o.dy, t: .22 }); }
     if(o.ghosts){ for(const gh of o.ghosts) gh.t -= dt; o.ghosts = o.ghosts.filter(gh => gh.t > 0); }
     const ex = Math.min(.15, G.t - o.seen), tx = o.x + (o.vx || 0) * ex, ty = o.y + (o.vy || 0) * ex, k = Math.min(1, dt * 14); // a little ahead along its last speed
@@ -2738,7 +2741,7 @@ function svStab(){ // twin daggers: quick alternating slashes at whatever is clo
   if(!tg.length) return;
   B.hand = -(B.hand || 1);
   const arcs = tg.map(m => [Math.atan2(m.y - P.y, m.x - P.x) + B.hand * .3, 1.6]);
-  B.swing = { t: 0, dur: .1, arcs, spins: 1, R, hit: new Set(), aim: arcs[0][0] };
+  B.swing = { t: 0, dur: .1, arcs, spins: 1, R, hit: new Set(), aim: arcs[0][0] }; mpSwingOut();
   B.swN++; SFX.hit(); svWave(arcs[0][0]);
 }
 function svVolley(){ // 비도술사: a ring of knives
@@ -2796,7 +2799,7 @@ function svSwing(){
   const aim = near ? Math.atan2(near.y - P.y, near.x - P.x) : Math.atan2(P.fy, P.fx);
   const arcs = great ? [[aim, Math.PI * 2]] : sk('twice') ? [[aim, 2.2], [aim + Math.PI, 2.2]] : [[aim, 2.2]];
   const spins = great ? 1 + sk('twice') : 1;
-  B.swing = { t: 0, dur: (great ? .3 : .16) * spins, arcs, spins, R, hit: new Set(), aim };
+  B.swing = { t: 0, dur: (great ? .3 : .16) * spins, arcs, spins, R, hit: new Set(), aim }; mpSwingOut();
   B.swN++;
   if(sk('blood')) P.hp = Math.max(1, P.hp - 2);
   SFX.hit(); if(great) G.shake = Math.max(G.shake, 1.5);

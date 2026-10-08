@@ -3610,7 +3610,8 @@ function drawForgeInfo(){
   const iw = T('공격력 ' + fmtK(ATK(L)) + '  판매 ' + (L > 0 ? fmtK(sellNow(L)) + ' G' : '-'), 8 + lvW + 8, y + 15, { f: 's', c: COL.dim });
   if(ck) T('균열 ' + ck, 8 + lvW + 14 + iw, y + 15, { f: 's', c: ck >= 4 ? COL.bad : COL.ember });
   if(L < MAX){
-    const o = odds(L), r = o.p, d = o.d, k = o.keep;
+    const mid = F.st === 'gauge' || F.st === 'swing'; // mid-swing: the odds of the swing already paid for (가호/축복 as bought), not of the next one
+    const o = mid ? odds(L, 0, F.bless, F.guard) : odds(L), r = o.p, d = o.d, k = o.keep;
     const bx = 8, bw = 254, by = 334;
     R(bx - 1, by - 1, bw + 2, 9, COL.ink);
     const w1 = Math.round(bw * r / 100), w3 = Math.max(d > 0 ? 1 : 0, Math.round(bw * d / 100)), w2 = bw - w1 - w3;
@@ -3628,7 +3629,7 @@ function drawForgeInfo(){
   else button('forge', 8, 360, 180, 42, L < MAX ? '강화하기' : '최대 강화', L < MAX ? fmt(swingCost(L)) + ' G' : '', startForge, { kind: 'primary', dis: L >= MAX || !idle });
   button('sell', 194, 360, 68, 42, F.sellArm > 0 ? '정말?' : '판매', L > 0 ? '+' + fmtK(sellNow(L)) : '-', sellSword, { kind: F.sellArm > 0 ? 'gold' : 'normal', dis: L < 1 || !idle, subc: COL.gold });
   // three switches under the buttons: 가호 (this level's tier), 축복 (scrolls per swing), 내구도 보수
-  const tier = gTier(L), gOn = useGuard(L), bOn = useBless(L);
+  const midSw = F.st === 'gauge' || F.st === 'swing', tier = gTier(L), gOn = midSw ? F.guard : useGuard(L), bOn = midSw ? F.bless : useBless(L);
   const tog = (id, x, w, on, avail, label, sub, fn, warn) => {
     const pr = pressedOn(id), by = 406;
     R(x, by, w, 26, COL.ink); R(x + 1, by + 1, w - 2, 24, on ? '#3a3010' : '#1e1612'); if(on) R(x + 1, by + 1, w - 2, 1, COL.gold);

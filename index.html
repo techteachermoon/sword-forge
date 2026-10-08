@@ -3579,7 +3579,7 @@ function drawModal(){
   } else if(m.k === 'reset'){
     const { x, y } = mwin(230, 160, '처음부터?', COL.bad);
     wrap('검, 골드, 도감, 업적이 모두 지워진다. 되돌릴 수 없다.', 's', 200).forEach((ln, i) => T(ln, VW / 2, y + 46 + i * 12, { f: 's', a: 'c', c: COL.dim }));
-    button('rsy', x + 12, y + 84, 206, 28, '지우고 새로 시작', null, () => { const nm = S.name; const op = S.opts; S = fresh(); S.name = nm; S.opts = op; ensureDaily(); save(); G.modal = null; G.tab = 'forge'; F.st = 'idle'; F.hidden = false; say('...새 망치를 쥐었군. 처음부터 다시 가자.'); rankPush(); }, { kind: 'danger' });
+    button('rsy', x + 12, y + 84, 206, 28, '지우고 새로 시작', null, () => { const nm = S.name; const op = S.opts; S = fresh(); S.name = nm; S.opts = op; S.tut = 1; S.tut5 = 1; migrate(); /* fills fields that only migrate() creates (축복 등급 등) */ ensureDaily(); dirty = true; flush(); G.modal = null; G.tab = 'forge'; F.st = 'idle'; F.hidden = false; say('...새 망치를 쥐었군. 처음부터 다시 가자.'); rankPush(); }, { kind: 'danger' });
     button('rsn', x + 12, y + 120, 206, 28, '취소', null, () => { G.modal = { k: 'settings' }; }, {});
   } else if(m.k === 'codex'){
     const w = wepOf(m.id), L = w.L, s = swordFrame(m.id, G.t), W = WL[w.line], fx = wfx(m.id), ci = CLS_INFO[W.shape];

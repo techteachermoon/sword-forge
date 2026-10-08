@@ -1825,7 +1825,9 @@ function craft(k){
 // ---------------- battle ----------------
 let B = null;
 function startBattle(s){ if(!diffOpen(curDiff()) || s > PG().stage) return; startSurv(s); }
-function loseBattle(why){ if(!B || B.over) return; B.over = { win: false, why: why || 'time', t: 0 }; SFX.lose(); save(); }
+function loseBattle(why){ if(!B || B.over) return;
+  if(B.mp && why === 'hp'){ if(!B.dead){ B.dead = true; B.P.hp = 0; B.joy = null; B.swing = null; B.spec = null; SFX.lose(); B.banner = { t: 0, text: '쓰러졌다', sub: '보스를 잡으면 부활한다 · 화면을 누르면 다른 친구 보기', warn: true }; } return; } // together: lie there until the party kills a boss
+  B.over = { win: false, why: why || 'time', t: 0 }; SFX.lose(); save(); }
 function leaveBattle(){
   mpLeave();
   const won = B && B.over && B.over.win;
@@ -1993,7 +1995,10 @@ function worldBG(ai){
   for(let i = 0; i < 6; i++){ px(i, 0, 1, H, pal.edge); px(W - 1 - i, 0, 1, H, pal.edge); px(0, i, W, 1, pal.edge); px(0, H - 1 - i, W, 1, pal.edge); }
   return WBG[key] = c;
 }
-const svCamT = () => ({ x: clamp(B.P.x - VW / 2 + (B.P.fx || 0) * 14, 0, Math.max(0, SV.ww - VW)), y: clamp(B.P.y - SV.y0 - SV.h / 2 + (B.P.fy || 0) * 10, 0, Math.max(0, SV.wh - SV.h)) });
+const camOn = () => { if(B.mp && B.dead){ const o = specTarget(); if(o) return { x: o.dx, y: o.dy, fx: 0, fy: 0 }; } return B.P; }; // fallen: the camera follows a living friend
+const svCamT = () => { const c = camOn(); return { x: clamp(c.x - VW / 2 + (c.fx || 0) * 14, 0, Math.max(0, SV.ww - VW)), y: clamp(c.y - SV.y0 - SV.h / 2 + (c.fy || 0) * 10, 0, Math.max(0, SV.wh - SV.h)) }; };
+function specTarget(){ const live = mpPeers(); if(!live.length) return null; let o = live.find(p => p.id === B.spec); if(!o){ o = live[0]; B.spec = o.id; } return o; }
+function specNext(){ const live = mpPeers(); if(!live.length) return; const i = live.findIndex(p => p.id === B.spec); B.spec = live[(i + 1) % live.length].id; SFX.click(); }
 const svCam = () => B.cam || svCamT();
 const KEYS = {};
 // difficulty: [name, color, monster hp, monster damage, spawn rate, elite rate, gold, kills needed]
@@ -2084,9 +2089,10 @@ function enStageClear(){
   if(B.mp && !MP.remote) mpSend('f', { n: B.n });
   track('climb', 0, B.n); S.enMax = Math.max(S.enMax || 0, B.n); checkAch();
   B.ai = nai; B.boss = B.n % EN_BOSS === 0; B.need = B.boss ? 1 : Math.round(enNeed(B.n) * (B.mp ? 1 + .5 * (mpN() - 1) : 1)); B.pr = 0; B.kills = 0; B.bossOut = false; B.st = 0; B.treasure = 0; B.spawnT = .8;
-  B.P.hp = Math.min(B.P.max, B.P.hp + B.P.max * (wasBoss ? .5 : .15)); B.P.inv = 1;
+  if(!B.dead){ B.P.hp = Math.min(B.P.max, B.P.hp + B.P.max * (wasBoss ? .5 : .15)); B.P.inv = 1; }
   B.banner = { t: 0, text: B.n + '층' + (B.boss ? ' 보스' : ''), sub: newArea ? AREAS[nai].name + ' · 몬스터가 더 단단해졌다' : wasBoss ? '보스 격파! 카드를 골라라' : '점수 ' + fmt(B.score) };
   if(newArea){ G.flash = .5; G.flashC = '#000000'; B.mons = []; B.eshots = []; B.fields = []; }
+  if(wasBoss && B.dead){ B.dead = false; B.deadT = 0; B.spec = null; B.P.hp = Math.round(B.P.max * .5); B.P.inv = 2; G.flash = .4; G.flashC = '#fff3b0'; SFX.perfect(); B.pillars.push({ x: B.P.x, y: B.P.y, t: 0 }); B.nums.push({ x: B.P.x, y: B.P.y - 30, v: '부활!', crit: true, t: 0, c: '#fff3b0', big: true }); } // the party got the boss: back on your feet
   if(wasBoss){ if(tr('bossh')) B.headPicks++; svLevelUp(); }
   save();
 }
@@ -2111,8 +2117,8 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 7; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
-const MP_MAX = 6, MP_DT = .15, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
+const MP_VER = 8; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
   return new Promise((res, rej) => {
@@ -2201,6 +2207,8 @@ function mpRecv(p){
   if(MP.lobby){ mpLobbyLeave(); SFX.deny(); toast('이 방은 이미 게임 중이다. 다른 방을 골라라'); return; }
   if(p.v !== MP_VER && !MP.verWarn){ MP.verWarn = 1; toast('게임 버전이 다른 친구가 있다. 모두 새로고침(F5) 해라'); }
   const o = MP.peers[p.id] || (MP.peers[p.id] = { dx: p.x, dy: p.y });
+  if(o.seen != null && p.x != null){ const gap = Math.max(.05, G.t - o.seen); o.vx = clamp((p.x - o.x) / gap, -400, 400); o.vy = clamp((p.y - o.y) / gap, -400, 400); }
+  if(p.fx && B && B.mp && !MP.lobby) mpFxIn(Object.assign(o, { n: p.n, ln: p.ln }), p.fx);
   Object.assign(o, { st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
   if(p.hits && MP.host && B && B.mp && p.n === B.n) mpApplyHits(p.id, p.hits);
 }
@@ -2217,13 +2225,38 @@ function mpApplyHits(from, hs){
 }
 // host: monsters chase whoever is nearest
 function mpTarget(m){
-  const P = B.P; let best = P, bd = Math.hypot(P.x - m.x, P.y - m.y);
+  const P = B.P; let best = B.dead ? null : P, bd = B.dead ? 1e9 : Math.hypot(P.x - m.x, P.y - m.y);
   for(const o of mpPeers()){ const d = Math.hypot(o.x - m.x, o.y - m.y); if(d < bd){ bd = d; best = o; } }
-  return best;
+  return best || P;
+}
+// effects travel with every message: new blasts, bolts, pillars, casts, fire fields, thrown blades and swings.
+// What arrives is only drawn (rm): it never hits anything here, the damage already went through the host.
+function mpFxOut(){
+  const out = [], r = Math.round, f2 = v => Math.round(v * 100) / 100;
+  for(const b of B.blasts) if(!b._n && !b.rm){ b._n = 1; out.push(['b', r(b.x), r(b.y), r(b.r), (b.magic ? 1 : 0) | (b.quake ? 2 : 0)]); }
+  for(const b of B.bolts) if(!b._n && !b.rm){ b._n = 1; out.push(['l', r(b.x1), r(b.y1), r(b.x2), r(b.y2)]); }
+  for(const q of B.pillars) if(!q._n && !q.rm){ q._n = 1; out.push(['p', r(q.x), r(q.y)]); }
+  for(const c of B.casts || []) if(!c._n && !c.rm){ c._n = 1; out.push(['c', r(c.x0), r(c.y0), r(c.x), r(c.y), f2(c.dur)]); }
+  for(const q of B.fields) if(!q._n && !q.rm){ q._n = 1; out.push(['f', r(q.x), r(q.y), r(q.r), f2(q.t)]); }
+  for(const q of B.shots) if(!q._n && !q.rm){ q._n = 1; out.push(['s', r(q.x), r(q.y), r(q.vx), r(q.vy), (q.dag ? 1 : 0) | (q.big ? 2 : 0), f2(q.life), f2(q.a || 0)]); }
+  const sw = B.swing; if(sw && !sw._n){ sw._n = 1; out.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), r(sw.R), f2(sw.dur), sw.spins || 1]); }
+  return out.length > 40 ? out.slice(-40) : out;
+}
+function mpFxIn(o, fx){
+  if(!B || !Array.isArray(fx) || o.n !== B.n) return; const col = (WL[o.ln] || WL.c).col;
+  for(const e of fx){ const k = e[0];
+    if(k === 'b') B.blasts.push({ x: e[1], y: e[2], r: e[3], t: 0, magic: !!(e[4] & 1), quake: !!(e[4] & 2), col, rm: 1 });
+    else if(k === 'l') B.bolts.push({ x1: e[1], y1: e[2], x2: e[3], y2: e[4], t: 0, rm: 1 });
+    else if(k === 'p') B.pillars.push({ x: e[1], y: e[2], t: 0, rm: 1 });
+    else if(k === 'c'){ B.casts = B.casts || []; B.casts.push({ x0: e[1], y0: e[2], x: e[3], y: e[4], t: 0, dur: e[5] || .2, col, rm: 1 }); }
+    else if(k === 'f') B.fields.push({ x: e[1], y: e[2], r: e[3], t: e[4], tick: .5, rm: 1 });
+    else if(k === 's'){ if(B.shots.length < 160) B.shots.push({ x: e[1], y: e[2], vx: e[3], vy: e[4], dag: !!(e[5] & 1), big: !!(e[5] & 2), life: e[6], a: e[7], hit: new Set(), pierce: 0, col, rm: 1 }); }
+    else if(k === 'w' && Array.isArray(e[1])) o.sw = { arcs: e[1], R: e[2], dur: e[3] || .15, spins: e[4] || 1, t: 0 };
+  }
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
 function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y)]); }
-const mpMe = () => ({ v: MP_VER, st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, dead: !!B.over, t0: MP.t0 });
+const mpMe = () => ({ v: MP_VER, dead: !!(B.over || B.dead), st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
@@ -2253,6 +2286,7 @@ function mpWorld(p){
       if(kind === 'boss' && !B.bossOut){ B.bossOut = true; B.bossFx = { x, y, t: 0 }; B.banner = { t: 0, text: m.name, sub: '보스 등장! 다 같이 잡자', warn: true }; G.flash = .35; G.flashC = '#ff2a1a'; SFX.boom(); G.shake = 9; }
     }
     if(m.die) continue;
+    { const gap = Math.max(.05, G.t - (m.snapT || G.t - MP_DT)); m.vx = clamp((x - (m.sx != null ? m.sx : x)) / gap, -300, 300); m.vy = clamp((y - (m.sy != null ? m.sy : y)) / gap, -300, 300); m.sx = x; m.sy = y; m.snapT = G.t; }
     Object.assign(m, { tx: x, ty: y, hp: Math.min(m.hp, hp), max, face, fast: !!(fl & 1), mini: !!(fl & 32), ai, sc, dmg, spd, def: def / 100, act, actT, da, born: Math.max(m.born, born) });
     if(fl & 2) m.slowT = Math.max(m.slowT, .2); if(fl & 4) m.stun = Math.max(m.stun, .2); if(fl & 8) m.burnT = Math.max(m.burnT, .2); if(fl & 16) m.poisonT = Math.max(m.poisonT, .2);
   }
@@ -2269,7 +2303,10 @@ function mpFloor(p){
 }
 function mpTick(dt){
   if(!B || !B.mp) return;
-  for(const id in MP.peers){ const o = MP.peers[id]; if(G.t - o.seen > 5){ delete MP.peers[id]; continue; } const k = Math.min(1, dt * 12); o.dx += (o.x - o.dx) * k; o.dy += (o.y - o.dy) * k; }
+  for(const id in MP.peers){ const o = MP.peers[id]; if(G.t - o.seen > 5){ delete MP.peers[id]; continue; }
+    if(o.sw) o.sw.t += dt;
+    const ex = Math.min(.15, G.t - o.seen), tx = o.x + (o.vx || 0) * ex, ty = o.y + (o.vy || 0) * ex, k = Math.min(1, dt * 14); // a little ahead along its last speed
+    if(Math.abs(tx - o.dx) + Math.abs(ty - o.dy) > 120){ o.dx = tx; o.dy = ty; } else { o.dx += (tx - o.dx) * k; o.dy += (ty - o.dy) * k; } }
   if(MP.host && B.over) MP.host = false; // fallen or gone home: someone else runs the field
   if(!B.over){ const ps = mpPeers(); B.mpMax = Math.max(B.mpMax || 1, 1 + ps.length); B.mpWith = B.mpWith || {}; for(const o of ps) if(o.nm && !badName(o.nm)) B.mpWith[o.id] = String(o.nm).slice(0, 8); } // for the party board
   if(!MP.host && !B.over && G.t - MP.lastW > 1.6 && G.t - MP.joinT > 1.2){ // nobody is running the field: whoever has been here longest takes over
@@ -2278,12 +2315,13 @@ function mpTick(dt){
   }
   MP.sendT -= dt;
   if(MP.sendT <= 0){ MP.sendT = MP_DT;
-    if(MP.host) mpSend('w', mpSnap());
-    else mpSend('p', Object.assign(mpMe(), MP.hits.length ? { hits: MP.hits.splice(0, 120) } : {})); }
+    const fx = mpFxOut();
+    if(MP.host) mpSend('w', Object.assign(mpSnap(), fx.length ? { fx } : {}));
+    else mpSend('p', Object.assign(mpMe(), MP.hits.length ? { hits: MP.hits.splice(0, 120) } : {}, fx.length ? { fx } : {})); }
 }
 // 같이 하기 party panel: every member's health, what they are doing, and the damage they landed this run
 function drawDmgMeter(x, y){
-  const rows = [{ nm: S.name, dm: B.dmgDone || 0, ln: B.line, hp: B.P.hp / B.P.max * 100, st: B.pick ? 1 : B.paused ? 2 : 0, dead: !!B.over, me: true, host: MP.host }]
+  const rows = [{ nm: S.name, dm: B.dmgDone || 0, ln: B.line, hp: B.P.hp / B.P.max * 100, st: B.pick ? 1 : B.paused ? 2 : 0, dead: !!(B.over || B.dead), me: true, host: MP.host }]
     .concat(Object.values(MP.peers).filter(o => G.t - o.seen < 5).map(o => ({ nm: badName(o.nm) ? '친구' : String(o.nm || '친구'), dm: o.dm || 0, ln: o.ln, hp: o.hp || 0, st: o.st || 0, dead: o.dead, far: o.n !== B.n, host: o.id === mpHostId() })));
   rows.sort((a, b) => b.dm - a.dm);
   const tot = rows.reduce((a, r) => a + r.dm, 0) || 1, top = rows[0].dm || 1, w = 128;
@@ -2308,6 +2346,10 @@ function chatBubble(id, x, y){ // the last quick-chat line from this player, for
   T(t, x, y + 1, { f: 's', a: 'c', c: '#2a1c14' }); g.globalAlpha = 1;
 }
 function peerDraw(o){
+  if(o.dead){ ic('skull', Math.round(o.dx) - 7, Math.round(o.dy) - 8, 2); chatBubble(o.id, o.dx, o.dy - 34); T((badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8)) + ' (쓰러짐)', o.dx, o.dy - 20, { f: 's', a: 'c', c: COL.faint, ol: COL.ink }); return; }
+  if(o.sw && o.sw.t < o.sw.dur){ const sw = o.sw, k = sw.t / sw.dur, sc2 = (WL[o.ln] || WL.c).col; g.globalAlpha = .75;
+    for(const [a0, span] of sw.arcs){ const cur = a0 - span / 2 + span * sw.spins * k; for(let j = 0; j < 6; j++){ const an = cur - j * .2; for(let r = sw.R * .45; r <= sw.R; r += 3) P(o.dx + Math.cos(an) * r, o.dy - 2 + Math.sin(an) * r, j < 2 ? '#ffffff' : sc2); } }
+    g.globalAlpha = 1; }
   const x = Math.round(o.dx), y = Math.round(o.dy), c = (WL[o.ln] || WL.c).col, f = o.f < 0 ? -1 : 1, mv = Math.hypot(o.x - o.dx, o.y - o.dy) > .5, st = mv ? Math.sin(G.t * 14) : 0;
   g.globalAlpha = o.dead ? .35 : .9;
   R(x - 3, y + 1, 3, 5 - (st > 0 ? 1 : 0), COL.ink); R(x + 1, y + 1, 3, 5 - (st < 0 ? 1 : 0), COL.ink);
@@ -2464,7 +2506,7 @@ function monBoom(m){
   m.hp = 0; m.die = .001; m.fled = true; G.shake = Math.max(G.shake, 4); SFX.boom();
   B.blasts.push({ x: m.x, y: m.y, r: BOOM_R, t: 0 });
   burst(m.x, m.y - 4, 26, ['#ff9a2a', '#fff2a0', '#d8401a', '#3a0a0a'], 120, .5, 60);
-  const P = B.P; if(Math.hypot(P.x - m.x, P.y - m.y) < BOOM_R + 4 && P.inv <= 0) svHurt({ dmg: Math.round(m.dmg * 1.6), x: m.x, y: m.y });
+  const P = B.P; if(!B.dead && Math.hypot(P.x - m.x, P.y - m.y) < BOOM_R + 4 && P.inv <= 0) svHurt({ dmg: Math.round(m.dmg * 1.6), x: m.x, y: m.y });
   if(B.mp) for(const o of mpPeers()) if(Math.hypot(o.x - m.x, o.y - m.y) < BOOM_R + 4) mpHurt(o, Math.round(m.dmg * 1.6), m);
   for(const o of B.mons) if(o !== m && o.die === 0 && Math.hypot(o.x - m.x, o.y - m.y) < BOOM_R) svHit(o, 2, { depth: 3, noProc: true, c: '#ff9a2a' }); // it hurts its friends too
 }
@@ -2683,7 +2725,7 @@ function svUpdateCasts(dt){
   for(let i = (B.casts || []).length - 1; i >= 0; i--){ const c = B.casts[i]; c.t += dt;
     const k = Math.min(1, c.t / c.dur), cx = c.x0 + (c.x - c.x0) * k, cy = c.y0 + (c.y - c.y0) * k - Math.sin(k * Math.PI) * 26;
     G.parts.push({ x: cx + (Math.random() - .5) * 3, y: cy + (Math.random() - .5) * 3, vx: 0, vy: 0, life: .25, max: .25, c: Math.random() < .5 ? '#ffffff' : B.wcol, grav: 0 });
-    if(c.t >= c.dur){ B.casts.splice(i, 1); svBlast(c.x, c.y); } }
+    if(c.t >= c.dur){ B.casts.splice(i, 1); if(!c.rm) svBlast(c.x, c.y); } }
 }
 function svBlast(x, y, k = 1){
   const r = svR();
@@ -2735,7 +2777,7 @@ function svUpdateSwing(dt){
   if(sw.t >= sw.dur) B.swing = null;
 }
 function svFever(){
-  if(!B || B.over || B.fev < 100) return;
+  if(!B || B.over || B.dead || B.fev < 100) return;
   B.fev = 0; B.fevT = .6; G.flash = .35; G.flashC = '#fff2c8'; G.shake = 7; SFX.boom(); SFX.success(20);
   B.feverLock = true; // the special's own hits (and what they set off) don't refill the gauge
   try{ for(const m of B.mons.slice()) if(m.die === 0) svHit(m, tr('m_surge') ? 20 : 10, { c: '#ffe070' }); } finally { B.feverLock = false; }
@@ -2776,7 +2818,8 @@ function survUpdate(dt){
   for(let i = B.nums.length - 1; i >= 0; i--){ const n = B.nums[i]; n.t += dt; n.y -= dt * (n.big ? 8 : 30); if(n.t > (n.big ? 1.8 : .8)) B.nums.splice(i, 1); }
   if(B.fevT > 0) B.fevT -= dt;
   if(B.over){ B.over.t += dt; return; }
-  const busy = B.mp && !!(B.pick || B.paused); /* together: the field never stops. Picking a card or in the menu, you just stand there */
+  const busy = B.mp && !!(B.pick || B.paused || B.dead);
+  if(B.dead){ B.P.inv = 9; if(!mpPeers().length){ B.deadT = (B.deadT || 0) + dt; if(B.deadT > 2){ B.over = { win: false, why: 'hp', t: 0 }; save(); return; } } else B.deadT = 0; } /* everyone down: that's the end */ /* together: the field never stops. Picking a card or in the menu, you just stand there */
   if(!busy && (B.paused || B.pick)) return;
   const rep = B.mp && !MP.host; /* together, not the host: the monsters are copies of the host's field */
   if(B.mp && B.pick){ B.pickT = (B.pickT || 0) + dt; if(B.pickT < 8) B.P.inv = Math.max(B.P.inv, .1); } else B.pickT = 0; /* a few safe seconds to choose */
@@ -2805,17 +2848,17 @@ function survUpdate(dt){
   // weapon
   if(!busy){ B.swT -= dt; if(B.swT <= 0 && !B.swing){ B.swT = svCd(); svAttack(); } }
   svUpdateSwing(dt); svUpdateCasts(dt); if(B.castT > 0) B.castT -= dt;
-  const nOrb = (B.danceT > 0 ? 6 + sk('mist') * 2 : 0) + sk('orbit') * 2;
+  const nOrb = B.dead ? 0 : (B.danceT > 0 ? 6 + sk('mist') * 2 : 0) + sk('orbit') * 2; /* a fallen smith's skills rest too */
   if(B.danceT > 0) B.danceT -= dt;
   B.orbs = [];
   for(let i = 0; i < nOrb; i++){ const a = B.t * 6 + i / nOrb * Math.PI * 2, ox = P.x + Math.cos(a) * 32, oy = P.y - 2 + Math.sin(a) * 28; B.orbs.push([ox, oy, a]);
     for(const m of B.mons){ if(m.die !== 0 || (m.orbT || 0) > B.t || Math.hypot(m.x - ox, m.y - oy) > m.r + 6) continue; m.orbT = B.t + .3; svHit(m, .9, { kb: 6, orb: true }); } }
-  for(let i = B.fields.length - 1; i >= 0; i--){ const f = B.fields[i]; if(!f) continue; f.t -= dt; f.tick -= dt; if(f.t <= 0){ B.fields.splice(i, 1); continue; }
+  for(let i = B.fields.length - 1; i >= 0; i--){ const f = B.fields[i]; if(!f) continue; f.t -= dt; f.tick -= dt; if(f.t <= 0){ B.fields.splice(i, 1); continue; } if(f.rm) continue;
     if(f.tick <= 0){ f.tick = .5; for(const m of B.mons) if(m.die === 0 && Math.hypot(m.x - f.x, m.y - f.y) < f.r){ m.burnT = 2; svHit(m, .35, { dot: true, c: '#ff9a3a' }); } } }
-  if(sk('regen')){ B.regenT += dt; if(B.regenT >= 1){ B.regenT = 0; P.hp = Math.min(P.max, P.hp + sk('regen') * .8); } }
+  if(sk('regen') && !B.dead){ B.regenT += dt; if(B.regenT >= 1){ B.regenT = 0; P.hp = Math.min(P.max, P.hp + sk('regen') * .8); } }
   if(B.line === 'g2' && !B.shield){ B.shieldT += dt; if(B.shieldT >= (tr('g2_fort') ? 5 : 8)){ B.shield = 1; B.shieldT = 0; SFX.warp(); } }
-  if(sk('aura')){ B.auraT += dt; if(B.auraT >= 1){ B.auraT = 0; for(const m of B.mons) if(m.die === 0 && Math.hypot(m.x - P.x, m.y - P.y) < 52) svHit(m, sk('aura') * .6, { depth: 1, c: '#fff3b0' }); } }
-  if(sk('smite')){ B.smiteT += dt; if(B.smiteT >= 5){ B.smiteT = 0; const live = B.mons.filter(m => m.die === 0); for(let i = 0; i < sk('smite') + 1 && live.length; i++){ const m = live.splice(Math.floor(Math.random() * live.length), 1)[0]; B.pillars.push({ x: m.x, y: m.y, t: 0 }); svHit(m, 6, { depth: 1, c: '#fff3b0' }); } SFX.perfect(); } }
+  if(sk('aura') && !B.dead){ B.auraT += dt; if(B.auraT >= 1){ B.auraT = 0; for(const m of B.mons) if(m.die === 0 && Math.hypot(m.x - P.x, m.y - P.y) < 52) svHit(m, sk('aura') * .6, { depth: 1, c: '#fff3b0' }); } }
+  if(sk('smite') && !B.dead){ B.smiteT += dt; if(B.smiteT >= 5){ B.smiteT = 0; const live = B.mons.filter(m => m.die === 0); for(let i = 0; i < sk('smite') + 1 && live.length; i++){ const m = live.splice(Math.floor(Math.random() * live.length), 1)[0]; B.pillars.push({ x: m.x, y: m.y, t: 0 }); svHit(m, 6, { depth: 1, c: '#fff3b0' }); } SFX.perfect(); } }
   // spawning
   if(!rep && (!B.boss || B.st > 2)){
     const alive = B.mons.filter(m => m.die === 0).length;
@@ -2841,7 +2884,8 @@ function survUpdate(dt){
     if(m.born < .35){ m.born += dt; continue; }
     if(rep){ // a copy: glide toward where the host has it
       if(m.slowT > 0) m.slowT -= dt; if(m.stun > 0) m.stun -= dt; if(m.burnT > 0) m.burnT -= dt; if(m.poisonT > 0) m.poisonT -= dt;
-      const k = Math.min(1, dt * 10); if(Math.abs(m.tx - m.x) + Math.abs(m.ty - m.y) > 90){ m.x = m.tx; m.y = m.ty; } else { m.x += (m.tx - m.x) * k; m.y += (m.ty - m.y) * k; }
+      if(G.t - (m.snapT || 0) < .25){ m.tx += (m.vx || 0) * dt; m.ty += (m.vy || 0) * dt; } // keep moving between snapshots
+      const k = Math.min(1, dt * 14); if(Math.abs(m.tx - m.x) + Math.abs(m.ty - m.y) > 90){ m.x = m.tx; m.y = m.ty; } else { m.x += (m.tx - m.x) * k; m.y += (m.ty - m.y) * k; }
       continue; }
     if(m.hcd > 0) m.hcd -= dt;
     m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; m.kx *= .8; m.ky *= .8;
@@ -2867,7 +2911,7 @@ function survUpdate(dt){
   for(let i = B.shots.length - 1; i >= 0; i--){
     const s = B.shots[i]; s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
     if(s.life <= 0 || s.x < -20 || s.x > SV.ww + 20 || s.y < SV.y0 - 20 || s.y > SV.y0 + SV.wh + 20){ B.shots.splice(i, 1); continue; }
-    for(const m of B.mons){ if(m.die !== 0 || s.hit.has(m) || Math.hypot(m.x - s.x, m.y - s.y) > m.r + (s.big ? 12 : 6)) continue; s.hit.add(m); svHit(m, s.dmg || 1.5, s.dag ? { kb: 3, exec: true } : { kb: 8, depth: 1 }); if(--s.pierce < 0){ s.life = 0; break; } }
+    if(!s.rm) for(const m of B.mons){ if(m.die !== 0 || s.hit.has(m) || Math.hypot(m.x - s.x, m.y - s.y) > m.r + (s.big ? 12 : 6)) continue; s.hit.add(m); svHit(m, s.dmg || 1.5, s.dag ? { kb: 3, exec: true } : { kb: 8, depth: 1 }); if(--s.pierce < 0){ s.life = 0; break; } }
   }
   for(let i = B.fires.length - 1; i >= 0; i--){ B.fires[i].t -= dt; if(B.fires[i].t <= 0) B.fires.splice(i, 1); }
   for(let i = (B.decals || []).length - 1; i >= 0; i--){ B.decals[i].t -= dt; if(B.decals[i].t <= 0) B.decals.splice(i, 1); }
@@ -2894,7 +2938,7 @@ function svEvent(){ // pressure: a ring closes in, or a pack charges across
 }
 const svDashCd = () => (.85 + (B.fam === 'g' ? .25 : 0)) * (B.line === 't1' ? .7 : 1);
 function svDash(){
-  if(!B || !B.surv || B.over || B.pick || B.paused) return;
+  if(!B || !B.surv || B.over || B.pick || B.paused || B.dead) return;
   if(B.dashT > 0 || B.dashCh <= 0){ B.dashBuf = .22; return; } // pressed a hair early: it fires the moment it can
   B.dashBuf = 0;
   const P = B.P; let a = Math.atan2(P.fy, P.fx);
@@ -2919,6 +2963,7 @@ function svDash(){
   B.dashV = [Math.cos(a) * sp, Math.sin(a) * sp]; B.dashT = .15; B.dashHit = new Set(); P.inv = Math.max(P.inv, .35); SFX.click();
 }
 function svHurt(m){
+  if(B.dead) return;
   const P = B.P;
   P.inv = .45;
   if(m.x != null && B.fam !== 'g'){ const d = Math.hypot(P.x - m.x, P.y - m.y) || 1; P.x = clamp(P.x + (P.x - m.x) / d * 7, 10, SV.ww - 10); P.y = clamp(P.y + (P.y - m.y) / d * 7, SV.y0 + 14, SV.y0 + SV.wh - 10); }
@@ -3006,7 +3051,8 @@ function survDraw(dt){
   if(B.ghosts && B.ghosts.length > 20) B.ghosts.splice(0, B.ghosts.length - 20);
   const inv = PL.inv > 0 && Math.floor(G.t * 20) % 2 === 0;
   if(B.blinkT > 0) B.blinkT -= dt; // 점멸: gone for a blink, then there
-  if(!inv && !(B.blinkT > 0)) heroDraw(PL.x, PL.y, G.t);
+  if(B.dead){ ic('skull', Math.round(PL.x) - 7, Math.round(PL.y) - 8, 2); T(S.name + ' (쓰러짐)', PL.x, PL.y - 20, { f: 's', a: 'c', c: COL.faint, ol: COL.ink }); }
+  else if(!inv && !(B.blinkT > 0)) heroDraw(PL.x, PL.y, G.t);
   if(B.mp) chatBubble(MP.me, PL.x, PL.y - 30);
   if(B.castT > 0){ g.globalAlpha = B.castT * 2.5; for(let a = 0; a < 16; a++){ const an = a / 16 * 6.28 + G.t * 8; P(PL.x + Math.cos(an) * 8, PL.y - 16 + Math.sin(an) * 3, B.wcol); } R(PL.x + 3, PL.y - 26, 2, 12, '#ffffff'); g.globalAlpha = 1; }
   if(B.shield){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(PL.x + Math.cos(an) * 11, PL.y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
@@ -3024,7 +3070,7 @@ function survDraw(dt){
   for(const o of B.orbs || []){ const [ox, oy, a] = o; for(let i = -4; i <= 4; i++) P(ox + Math.cos(a + 1.57) * i, oy + Math.sin(a + 1.57) * i, Math.abs(i) < 2 ? '#ffffff' : (B.danceT > 0 ? '#ff8ad8' : B.wcol)); }
   const lowQ = !GQ();
   for(const s of B.shots){ if(lowQ){ R(s.x - 1, s.y - 1, 3, 3, B.wcol); P(s.x, s.y, '#ffffff'); continue; } if(s.dag){ for(let i = 0; i < 6; i++) P(s.x - Math.cos(s.a) * i, s.y - Math.sin(s.a) * i, i < 2 ? '#ffffff' : B.wcol); continue; } const c = B.wcol, len = 5; for(let i = -len; i <= len; i++){ const an = s.a + Math.PI / 2; P(s.x + Math.cos(an) * i + Math.cos(s.a) * (Math.abs(i) * -.4), s.y + Math.sin(an) * i + Math.sin(s.a) * (Math.abs(i) * -.4), Math.abs(i) < 2 ? '#ffffff' : c); if(s.big) P(s.x + Math.cos(an) * i, s.y + Math.sin(an) * i + 1, c); } }
-  for(const b of B.blasts){ const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? B.wcol : '#ff9a3a';
+  for(const b of B.blasts){ const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? (b.col || B.wcol) : '#ff9a3a';
     if(k < .3 && GQ()){ const cr = b.r * (.25 + k * 1.2); g.globalAlpha = (.3 - k) * 2.6; for(let yy = -cr; yy <= cr; yy += 1){ const ww = Math.round(Math.sqrt(Math.max(0, cr * cr - yy * yy))); R(b.x - ww, b.y + yy * (b.quake ? .6 : 1), ww * 2, 1, k < .12 ? '#ffffff' : '#fff2c0'); } }
     g.globalAlpha = (1 - k) * .6; if(GQ()) for(let a = 0; a < 40; a++){ const an = a / 40 * 6.28 + k; P(b.x + Math.cos(an) * r * 1.18, b.y + Math.sin(an) * r * 1.18 * (b.quake ? .6 : 1), bc); }
     g.globalAlpha = 1 - k; for(let a = 0; a < 56; a++){ const an = a / 56 * 6.28; P(b.x + Math.cos(an) * r, b.y + Math.sin(an) * r * (b.quake ? .6 : 1), b.quake ? '#c8a070' : b.magic ? B.wcol : '#ff9a3a'); } if(b.magic && k < .4){ g.globalAlpha = (.4 - k) * 1.5; for(let yy = -r; yy <= r; yy += 2){ const ww = Math.round(Math.sqrt(r * r - yy * yy)); R(b.x - ww, b.y + yy, ww * 2, 1, B.wcol); } } g.globalAlpha = 1; }
@@ -3072,7 +3118,8 @@ function survDraw(dt){
   if(B.hurtT > 0){ B.hurtT -= dt; g.globalAlpha = B.hurtT; R(0, vy, VW, vh, '#ff2a1a'); g.globalAlpha = 1; }
   if(B.fevT > 0){ g.globalAlpha = B.fevT; R(0, vy, VW, vh, '#fff6d8'); g.globalAlpha = 1; }
   R(0, vy + vh, VW, 1, COL.ink);
-  if(!B.over && !B.pick && !B.paused) hit('bview', 0, vy, VW, vh, null, { onDown: (x, y) => { if(G.t - B.lastDown < .28 || (B.dashCh > 0 && G.t - (B.lastDash || -9) < .35)) svDash(); B.lastDown = G.t; B.joy = { sx: x, sy: y, x, y }; }, onMove: (x, y) => { if(B.joy){ B.joy.x = x; B.joy.y = y; } }, onUp: () => { B.joy = null; } });
+  if(B.dead && !B.over){ hit('bview', 0, vy, VW, vh, () => specNext()); { const o = specTarget(); T(o ? '관전 중: ' + (badName(o.nm) ? '친구' : o.nm) + ' · 누르면 다음 친구' : '남은 친구가 없다', VW / 2, vy + vh - 120, { f: 'b', a: 'c', c: '#bfe0ff', ol: COL.ink }); } }
+  else if(!B.over && !B.pick && !B.paused) hit('bview', 0, vy, VW, vh, null, { onDown: (x, y) => { if(G.t - B.lastDown < .28 || (B.dashCh > 0 && G.t - (B.lastDash || -9) < .35)) svDash(); B.lastDown = G.t; B.joy = { sx: x, sy: y, x, y }; }, onMove: (x, y) => { if(B.joy){ B.joy.x = x; B.joy.y = y; } }, onUp: () => { B.joy = null; } });
   // ---- HUD strip over the bottom of the battlefield (two rows on a narrow screen)
   const compact = VW < 480, sh2 = compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
   if(B.mp && !B.over) button('chat', VW - 52, vy + 18, 48, 16, G.chatOpen ? '닫기' : '말하기', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
@@ -3136,6 +3183,7 @@ function enResult(){
   if(B.newBest) T('신기록!', VW / 2, y + 40, { f: 'b', a: 'c', c: Math.sin(G.t * 8) > 0 ? '#ffe070' : '#ff9a3d', ol: COL.ink });
   let ly = y + 58; for(const [k, v, c] of lines){ T(k, x + 16, ly, { f: 's', c: COL.dim }); T(v, x + w - 16, ly, { f: 's', a: 'r', c }); ly += 14; }
   button('rout', x + 10, y + h - 34, 104, 24, '대장간으로', null, () => leaveBattle(), { kind: 'primary', small: true });
+  if(B.mp && MP.ch) button('rchat', x + w - 60, y + 14, 50, 18, '말하기', null, () => chatInput(), { small: true, kind: 'blue' });
   button('rretry', x + w - 114, y + h - 34, 104, 24, '다시 도전', null, () => { G.modal = { k: 'entrait', sel: B.tr }; leaveBattle(); G.tab = 'hunt'; }, { small: true });
 }
 function svPause(){ if(!B || !B.surv || B.over || B.pick) return; B.paused = !B.paused; B.joy = null; SFX.click(); if(B.paused) G.scroll.pause = { y: 0 }; }
@@ -4282,7 +4330,7 @@ addEventListener('keydown', e => {
   if(e.ctrlKey || e.metaKey || e.altKey){ releaseKeys(); return; }
   audioInit();
   const kk = keyOf(e), act = e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter';
-  if((e.key === 'Enter' || e.code === 'NumpadEnter') && MP.ch && ((G.scr === 'battle' && B && B.mp && !B.over) || MP.lobby)){ e.preventDefault(); chatInput(); return; } // together: Enter = chat (Space still rolls)
+  if((e.key === 'Enter' || e.code === 'NumpadEnter') && MP.ch && ((G.scr === 'battle' && B && B.mp) || MP.lobby)){ e.preventDefault(); chatInput(); return; } // together: Enter = chat (Space still rolls)
   if(G.scr === 'battle' && B && B.surv && (e.key === 'Escape' || kk === 'p')){ svPause(); return; }
   if(G.scr === 'battle' && B && B.surv && !e.repeat && kk === 'e'){ toggleBossT(); return; }
   if(e.key === 'Escape'){ if(G.modal && !['destroy', 'job', 'ench', 'inherit', 'lobby'].includes(G.modal.k)) G.modal = null; return; }

@@ -1862,13 +1862,15 @@ const sbAuthH = async () => ({ Authorization: 'Bearer ' + (await sbSession()).at
 // the same small shape the claude.ai db offers: collection().orderBy().limit().onSnapshot() and doc().set()
 function sbDb(){
   const room = () => encodeURIComponent(roomKey());
+  // 전체: everyone on this site (the public site's rows all start with '~'); 그룹: only the same code
+  const scope = () => G.rankScope === 'room' && S.room ? 'room=eq.' + room() : 'room=' + (isSchoolSite() ? 'not.like.' : 'like.') + encodeURIComponent('~*');
   const query = (field, dir, n) => ({
     orderBy: (f, d) => query(f, d, n), limit: k => query(field, dir, k),
     onSnapshot(next, err){
       let alive = true, timer = null;
       const pull = async () => {
         if(!alive) return;
-        try{ const rows = await sbFetch('/rest/v1/scores?select=*&room=eq.' + room() + '&order=' + field + '.' + (dir || 'asc') + '&limit=' + (n || 60), { headers: await sbAuthH() }); next({ docs: (rows || []).map(r => ({ id: r.id, data: () => r })) }); }
+        try{ const rows = await sbFetch('/rest/v1/scores?select=*&' + scope() + '&order=' + field + '.' + (dir || 'asc') + '&limit=' + (G.rankScope === 'room' && S.room ? n || 60 : 100), { headers: await sbAuthH() }); next({ docs: (rows || []).map(r => ({ id: r.id, data: () => r })) }); }
         catch(e){ err && err(e); }
         timer = setTimeout(pull, G.tab === 'rank' ? 8000 : 30000); // a lighter poll when nobody is looking at the board
       };
@@ -3643,9 +3645,9 @@ function saveImport(){
   });
 }
 function setRoom(){
-  codeBox(RW() + ' 코드를 적어 주세요. 같은 코드를 적은 친구끼리 랭킹을 겨루고 같이 하기 방에 모여요. (' + (isSchoolSite() ? 12 : 11) + '글자까지, 비우면 전체 랭킹)', S.room || '', '정하기', v => {
+  codeBox(RW() + ' 코드를 적어 주세요. 같은 코드를 적은 친구끼리 랭킹을 겨루고 같이 하기 방에 모여요. (' + (isSchoolSite() ? 12 : 11) + '글자까지. 전체 랭킹에는 언제나 함께 나온다)', S.room || '', '정하기', v => {
     if(badName(v)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있어요'); return; }
-    S.room = String(v).replace(/\s+/g, '').slice(0, 12); save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? RW() + ' 「' + S.room + '」' : '전체 랭킹');
+    S.room = String(v).replace(/[\s~]+/g, '').slice(0, 12); G.rankScope = S.room ? 'room' : 'all'; save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? RW() + ' 「' + S.room + '」 랭킹' : '전체 랭킹');
   });
 }
 function drawRank(){
@@ -3661,7 +3663,12 @@ function drawRank(){
       : ['랭킹 저장소가 아직 연결되지 않았다.', ...wrap('게임은 그대로 할 수 있다. 기록은 이 기기에 저장된다.', 's', 230)];
     msgBox(lines);
   } else {
-    if(RK.web) button('rkroom', VW - 76, 29, 72, 16, S.room ? RW() + ' ' + S.room : RW() + ' 코드 넣기', null, setRoom, { small: true, kind: S.room ? 'normal' : 'gold' });
+    if(RK.web){ // 전체 / 그룹 switch: everyone is always on 전체; a group code adds a board of just that group
+      const inRoom = G.rankScope === 'room' && !!S.room, sc = (k, x, w, label, fn) => button('rks_' + k, x, 384, w, 18, label, null, fn, { small: true, kind: (k === 'room') === inRoom ? 'gold' : 'normal' });
+      sc('all', 4, 78, '전체', () => { G.rankScope = 'all'; rankRefresh(); });
+      sc('room', 86, 108, S.room ? RW() + ' ' + S.room : RW() + ' 코드 넣기', () => { if(!S.room) return setRoom(); G.rankScope = 'room'; rankRefresh(); });
+      button('rks_set', 198, 384, 68, 18, '코드 바꾸기', null, setRoom, { small: true });
+      T(RK.status === 'loading' ? '불러오는 중...' : etab ? '층수 순' : '최고 강화 순', VW - 8, 33, { f: 's', a: 'r', c: COL.dim }); }
     else T(RK.status === 'loading' ? '불러오는 중...' : (RK.writable === false ? '보기 전용' : etab ? '층수 순' : '최고 강화 순'), VW - 8, 33, { f: 's', a: 'r', c: RK.writable === false ? COL.bad : COL.dim });
     const st = G.scroll.rank, top = 50, h = 330, rowH = 36;
     const rows = etab ? (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder) : RK.rows;

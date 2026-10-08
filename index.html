@@ -2117,7 +2117,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 9; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 10; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2209,7 +2209,7 @@ function mpRecv(p){
   const o = MP.peers[p.id] || (MP.peers[p.id] = { dx: p.x, dy: p.y });
   if(o.seen != null && p.x != null){ const gap = Math.max(.05, G.t - o.seen); o.vx = clamp((p.x - o.x) / gap, -400, 400); o.vy = clamp((p.y - o.y) / gap, -400, 400); }
   if(p.fx && B && B.mp && !MP.lobby) mpFxIn(Object.assign(o, { n: p.n, ln: p.ln }), p.fx);
-  Object.assign(o, { st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
+  Object.assign(o, { wid: p.wid, wc: p.wc, mv: p.mv, ob: p.ob || 0, au: p.au, shd: p.shd, st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
   if(p.hits && MP.host && B && B.mp && p.n === B.n) mpApplyHits(p.id, p.hits);
 }
 // host: a friend's blows land on the real monsters
@@ -2240,7 +2240,9 @@ function mpFxOut(){
   for(const q of B.fields) if(!q._n && !q.rm){ q._n = 1; out.push(['f', r(q.x), r(q.y), r(q.r), f2(q.t)]); }
   for(const q of B.shots) if(!q._n && !q.rm){ q._n = 1; out.push(['s', r(q.x), r(q.y), r(q.vx), r(q.vy), (q.dag ? 1 : 0) | (q.big ? 2 : 0), f2(q.life), f2(q.a || 0)]); }
   const sw = B.swing; if(sw && !sw._n){ sw._n = 1; out.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), r(sw.R), f2(sw.dur), sw.spins || 1]); }
-  return out.length > 40 ? out.slice(-40) : out;
+  if(MP.dn && MP.dn.length){ out.push(...MP.dn.splice(0, 25)); }
+  if(MP.ev && MP.ev.length) out.push(...MP.ev.splice(0));
+  return out.length > 70 ? out.slice(-70) : out;
 }
 function mpFxIn(o, fx){
   if(!B || !Array.isArray(fx) || o.n !== B.n) return; const col = (WL[o.ln] || WL.c).col;
@@ -2252,16 +2254,19 @@ function mpFxIn(o, fx){
     else if(k === 'f') B.fields.push({ x: e[1], y: e[2], r: e[3], t: e[4], tick: .5, rm: 1 });
     else if(k === 's'){ if(B.shots.length < 160) B.shots.push({ x: e[1], y: e[2], vx: e[3], vy: e[4], dag: !!(e[5] & 1), big: !!(e[5] & 2), life: e[6], a: e[7], hit: new Set(), pierce: 0, col, rm: 1 }); }
     else if(k === 'w' && Array.isArray(e[1])) o.sw = { arcs: e[1], R: e[2], dur: e[3] || .15, spins: e[4] || 1, t: 0 };
+    else if(k === 'd'){ const crit = !!(e[4] & 1); B.nums.push({ x: e[1] + (Math.random() - .5) * 8, y: e[2], v: fmtK(e[3]), crit, t: 0, c: e[5] || (crit ? '#ffe070' : null), small: !!(e[4] & 2), dn: 1 });
+      if(!(e[4] & 2) && GQ()){ B.hits = B.hits || []; if(B.hits.length < 48) B.hits.push({ x: e[1], y: e[2] + 6, t: 0, crit, c: crit ? '#ffe070' : '#ffffff', a: Math.random() * 3.14 }); } }
+    else if(k === 'n') B.banner = { t: 0, text: String(e[1] || '').slice(0, 20), sub: String(e[2] || '').slice(0, 40), warn: true };
   }
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
 function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y)]); }
-const mpMe = () => ({ v: MP_VER, dead: !!(B.over || B.dead), st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, t0: MP.t0 });
+const mpMe = () => ({ wid: B.wid, wc: B.wcol, mv: meMoving() && !B.dead ? 1 : 0, ob: (B.orbs || []).length, au: sk('aura') && !B.dead ? 1 : 0, shd: B.shield && !B.dead ? 1 : 0, v: MP_VER, dead: !!(B.over || B.dead), st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
     ms: B.mons.filter(m => m.die === 0 && m.nid).map(m => [m.nid, m.key, Math.max(0, MP_KIND.indexOf(m.kind)), Math.round(m.x), Math.round(m.y), Math.ceil(m.hp), Math.ceil(m.max), m.face < 0 ? -1 : 1,
-      (m.fast ? 1 : 0) | (m.slowT > 0 ? 2 : 0) | (m.stun > 0 ? 4 : 0) | (m.burnT > 0 ? 8 : 0) | (m.poisonT > 0 ? 16 : 0) | (m.mini ? 32 : 0), m.ai, r1(m.sc), m.dmg, Math.round(m.spd), Math.round((m.def || 0) * 100), m.act || 0, r1(m.actT || 0), r1(m.da || 0), r1(Math.min(.35, m.born))]),
+      (m.fast ? 1 : 0) | (m.slowT > 0 ? 2 : 0) | (m.stun > 0 ? 4 : 0) | (m.burnT > 0 ? 8 : 0) | (m.poisonT > 0 ? 16 : 0) | (m.mini ? 32 : 0) | (m.hitT > 0 ? 64 : 0), m.ai, r1(m.sc), m.dmg, Math.round(m.spd), Math.round((m.def || 0) * 100), m.act || 0, r1(m.actT || 0), r1(m.da || 0), r1(Math.min(.35, m.born))]),
     es: B.eshots.slice(0, 60).map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.dmg]) });
 }
 // everyone but the host: copy the host's field
@@ -2288,6 +2293,7 @@ function mpWorld(p){
     if(m.die) continue;
     { const gap = Math.max(.05, G.t - (m.snapT || G.t - MP_DT)); m.vx = clamp((x - (m.sx != null ? m.sx : x)) / gap, -300, 300); m.vy = clamp((y - (m.sy != null ? m.sy : y)) / gap, -300, 300); m.sx = x; m.sy = y; m.snapT = G.t; }
     Object.assign(m, { tx: x, ty: y, hp: Math.min(m.hp, hp), max, face, fast: !!(fl & 1), mini: !!(fl & 32), ai, sc, dmg, spd, def: def / 100, act, actT, da, born: Math.max(m.born, born) });
+    if(fl & 64) m.hitT = Math.max(m.hitT, .1);
     if(fl & 2) m.slowT = Math.max(m.slowT, .2); if(fl & 4) m.stun = Math.max(m.stun, .2); if(fl & 8) m.burnT = Math.max(m.burnT, .2); if(fl & 16) m.poisonT = Math.max(m.poisonT, .2);
   }
   for(const m of B.mons) if(m.die === 0 && m.nid && !seen.has(m.nid)){ m.die = .001; m.hp = 0; killFx(m); } // gone on the host: someone got it
@@ -2338,6 +2344,21 @@ function drawDmgMeter(x, y){
     T(fmtK(r.dm) + ' ' + Math.round(r.dm / tot * 100) + '%', x + w - 1, yy, { f: 's', a: 'r', c: COL.text, ol: COL.ink }); });
 }
 const mpHostId = () => MP.host ? MP.me : (Object.values(MP.peers).find(o => o.isHost && G.t - o.seen < 2) || {}).id;
+// a smith's sword: resting in hand, or the swing with its trail (mine and friends' look the same)
+function heroSword(x, y, sw, wid, col, R0){
+  if(!WEP[wid]) return; const spr = swordFrame(wid, G.t), sc = Math.min(.6, (sw ? sw.R : R0 || 40) / spr.W);
+  if(sw){
+    const k = Math.min(1, sw.t / sw.dur);
+    for(const [a0, span] of sw.arcs){
+      const cur = a0 - span / 2 + span * (sw.spins || 1) * k;
+      const TJ = [4, 9, 16][GQ()]; for(let j = 0; j < TJ; j++){ const an = cur - j * .08 * 16 / TJ; g.globalAlpha = (1 - j / TJ) * .85; const st = GQ() ? (j < 4 ? 1 : 2) : 3; for(let r = sw.R * .4; r <= sw.R + 1; r += st) P(x + Math.cos(an) * r, y - 2 + Math.sin(an) * r, j < 2 || r > sw.R - 2 ? '#ffffff' : col); }
+      if(Math.random() < .6) G.parts.push({ x: x + Math.cos(cur) * sw.R, y: y - 2 + Math.sin(cur) * sw.R, vx: Math.cos(cur + 1.57) * 60, vy: Math.sin(cur + 1.57) * 60, life: .2, max: .2, c: Math.random() < .5 ? '#ffffff' : col, grav: 0 });
+      g.globalAlpha = 1;
+      g.save(); g.translate(x, y - 2); g.rotate(cur); g.drawImage(spr.cv, -spr.gripX * sc, -spr.cy * sc, spr.W * sc, spr.H * sc); g.restore();
+    }
+  } else { g.save(); g.translate(x + 3, y); g.rotate(-1.2 + Math.sin(G.t * 3) * .05); const s2 = .4; g.drawImage(spr.cv, -spr.gripX * s2, -spr.cy * s2, spr.W * s2, spr.H * s2); g.restore(); }
+}
+function orbDraw(ox, oy, a, col){ for(let i = -4; i <= 4; i++) P(ox + Math.cos(a + 1.57) * i, oy + Math.sin(a + 1.57) * i, Math.abs(i) < 2 ? '#ffffff' : col); }
 function chatBubble(id, x, y){ // the last quick-chat line from this player, for 2.5 s
   const c = (MP.chat || []).filter(m => m.id === id && G.t - m.at < 2.5).pop(); if(!c) return;
   let t = c.t; while(t.length > 4 && tw(t, 's') > 120) t = t.slice(0, -2) + '…';
@@ -2346,19 +2367,17 @@ function chatBubble(id, x, y){ // the last quick-chat line from this player, for
   T(t, x, y + 1, { f: 's', a: 'c', c: '#2a1c14' }); g.globalAlpha = 1;
 }
 function peerDraw(o){
-  if(o.dead){ ic('skull', Math.round(o.dx) - 7, Math.round(o.dy) - 8, 2); chatBubble(o.id, o.dx, o.dy - 34); T((badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8)) + ' (쓰러짐)', o.dx, o.dy - 20, { f: 's', a: 'c', c: COL.faint, ol: COL.ink }); return; }
-  if(o.sw && o.sw.t < o.sw.dur){ const sw = o.sw, k = sw.t / sw.dur, sc2 = (WL[o.ln] || WL.c).col; g.globalAlpha = .75;
-    for(const [a0, span] of sw.arcs){ const cur = a0 - span / 2 + span * sw.spins * k; for(let j = 0; j < 6; j++){ const an = cur - j * .2; for(let r = sw.R * .45; r <= sw.R; r += 3) P(o.dx + Math.cos(an) * r, o.dy - 2 + Math.sin(an) * r, j < 2 ? '#ffffff' : sc2); } }
-    g.globalAlpha = 1; }
-  const x = Math.round(o.dx), y = Math.round(o.dy), c = (WL[o.ln] || WL.c).col, f = o.f < 0 ? -1 : 1, mv = Math.hypot(o.x - o.dx, o.y - o.dy) > .5, st = mv ? Math.sin(G.t * 14) : 0;
-  g.globalAlpha = o.dead ? .35 : .9;
-  R(x - 3, y + 1, 3, 5 - (st > 0 ? 1 : 0), COL.ink); R(x + 1, y + 1, 3, 5 - (st < 0 ? 1 : 0), COL.ink);
-  const by = y - 6; R(x - 4, by, 9, 8, COL.ink); R(x - 3, by + 1, 7, 6, '#6a4a32'); R(x - 2, by + 2, 5, 5, c);
-  R(x - 4, by - 7, 9, 8, COL.ink); R(x - 3, by - 6, 7, 6, '#f2c9a0'); R(x - 3, by - 6, 7, 2, '#3a2416'); P(x + f * 2, by - 3, COL.ink);
-  g.globalAlpha = 1;
-  chatBubble(o.id, x, by - 32);
-  T((badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8)) + (o.dead ? ' (쓰러짐)' : ''), x, by - 20, { f: 's', a: 'c', c: o.dead ? COL.faint : '#bfe0ff', ol: COL.ink });
-  if(!o.dead){ R(x - 8, by - 9, 16, 2, COL.ink); R(x - 8, by - 9, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a'); }
+  const nm = badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8);
+  if(o.dead){ ic('skull', Math.round(o.dx) - 7, Math.round(o.dy) - 8, 2); chatBubble(o.id, o.dx, o.dy - 34); T(nm + ' (쓰러짐)', o.dx, o.dy - 20, { f: 's', a: 'c', c: COL.faint, ol: COL.ink }); return; }
+  const x = o.dx, y = o.dy, col = o.wc || (WL[o.ln] || WL.c).col;
+  if(o.au){ g.globalAlpha = .25 + .1 * Math.sin(G.t * 4); for(let a = 0; a < 48; a++){ const an = a / 48 * 6.28 + G.t; P(x + Math.cos(an) * 52, y + Math.sin(an) * 52 * .8, '#fff3b0'); } g.globalAlpha = 1; }
+  heroDraw(x, y, G.t, o);
+  if(o.shd){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(x + Math.cos(an) * 11, y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
+  heroSword(x, y, o.sw && o.sw.t < o.sw.dur ? o.sw : null, o.wid, col, 40);
+  for(let i = 0; i < (o.ob || 0); i++){ const a = G.t * 6 + i / o.ob * Math.PI * 2; orbDraw(x + Math.cos(a) * 32, y - 2 + Math.sin(a) * 28, a, col); }
+  chatBubble(o.id, x, y - 32);
+  T(nm, x, y - 26, { f: 's', a: 'c', c: '#bfe0ff', ol: COL.ink });
+  R(x - 8, y - 15, 16, 2, COL.ink); R(x - 8, y - 15, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a');
 }
 const fmtT = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 // run cards: [name, max, desc(n), req(B) → offerable, rarity]
@@ -2591,7 +2610,8 @@ function svHit(m, base, o = {}){
   m.hp -= dmg; m.hitT = .1;
   if(!o.dot){ for(let i = 0; i < (crit ? 4 : 2); i++){ const a = Math.random() * 6.28; G.parts.push({ x: m.x, y: m.y - m.r * .5, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: .18, max: .18, c: crit ? '#ffe070' : '#ffffff', grav: 220, streak: 1 }); } if(crit){ G.shake = Math.max(G.shake, 1.5); B.stars = B.stars || []; if(GQ()) B.stars.push({ x: m.x, y: m.y - m.r * .5, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } }
   if(o.kb){ const d = Math.hypot(m.x - B.P.x, m.y - B.P.y) || 1, k = (m.kind === 'boss' ? .2 : 1) * (tr('g_storm') ? 2 : 1); m.kx += (m.x - B.P.x) / d * o.kb * k; m.ky += (m.y - B.P.y) / d * o.kb * k; }
-  B.nums.push({ x: m.x + (Math.random() - .5) * 8, y: m.y - m.r - 4, v: fmtK(dmg), crit, t: 0, c: o.c || (crit ? '#ffe070' : null), small: !!o.dot, dn: 1 }); /* dn: a damage number (설정 → 데미지 숫자) */
+  B.nums.push({ x: m.x + (Math.random() - .5) * 8, y: m.y - m.r - 4, v: fmtK(dmg), crit, t: 0, c: o.c || (crit ? '#ffe070' : null), small: !!o.dot, dn: 1 });
+  if(B.mp){ MP.dn = MP.dn || []; MP.dn.push(['d', Math.round(m.x), Math.round(m.y - m.r - 4), dmg, (crit ? 1 : 0) | (o.dot ? 2 : 0), o.c || '']); if(MP.dn.length > 40) MP.dn.shift(); } /* friends see my numbers too */ /* dn: a damage number (설정 → 데미지 숫자) */
   if(sk('leech') && !o.dot){ if(B.t - (B.leechT || 0) >= 1){ B.leechT = B.t; B.leechN = 0; } const h = Math.min(.5 * sk('leech'), sk('leech') * 3 - (B.leechN || 0)); if(h > 0){ B.leechN = (B.leechN || 0) + h; B.P.hp = Math.min(B.P.max, B.P.hp + h); } }
   const depth = o.depth || 0;
   if(!o.dot && !o.noProc && depth < 4){
@@ -2935,6 +2955,7 @@ function svEvent(){ // pressure: a ring closes in, or a pack charges across
     B.banner = { t: 0, text: '몰려온다!', sub: (side < 0 ? '왼쪽' : '오른쪽') + '에서 ' + A.monN[0] + ' 떼', warn: true };
   }
   SFX.boom(); G.shake = Math.max(G.shake, 4);
+  if(B.mp && MP.host && B.banner){ MP.ev = MP.ev || []; MP.ev.push(['n', B.banner.text, B.banner.sub]); }
 }
 const svDashCd = () => (.85 + (B.fam === 'g' ? .25 : 0)) * (B.line === 't1' ? .7 : 1);
 function svDash(){
@@ -2974,9 +2995,10 @@ function svHurt(m){
   B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: '#ff5a4a' });
   if(P.hp <= 0) loseBattle('hp');
 }
-function heroDraw(x, y, t){ // a little smith: apron in the weapon's color, legs that walk
-  const c = WL[B.line].col, moving = !!(B.joy || KEYS.a || KEYS.d || KEYS.w || KEYS.s || KEYS.ArrowLeft || KEYS.ArrowRight || KEYS.ArrowUp || KEYS.ArrowDown);
-  const st = moving ? Math.sin(t * 14) : 0, f = B.P.fx < 0 ? -1 : 1;
+const meMoving = () => !!(B.joy || KEYS.a || KEYS.d || KEYS.w || KEYS.s || KEYS.ArrowLeft || KEYS.ArrowRight || KEYS.ArrowUp || KEYS.ArrowDown);
+function heroDraw(x, y, t, o){ // a little smith: apron in the weapon's color, legs that walk. o: a friend's { ln, f, mv }
+  const c = WL[o ? o.ln : B.line] ? WL[o ? o.ln : B.line].col : WL.c.col, moving = o ? !!o.mv : meMoving();
+  const st = moving ? Math.sin(t * 14) : 0, f = (o ? o.f : B.P.fx) < 0 ? -1 : 1;
   x = Math.round(x); y = Math.round(y);
   g.globalAlpha = .35; R(x - 5, y + 5, 11, 2, '#000'); g.globalAlpha = 1;
   R(x - 3, y + 1, 3, 5 - (st > 0 ? 1 : 0), COL.ink); R(x + 1, y + 1, 3, 5 - (st < 0 ? 1 : 0), COL.ink); R(x - 2, y + 2, 1, 3 - (st > 0 ? 1 : 0), '#4a3424'); R(x + 2, y + 2, 1, 3 - (st < 0 ? 1 : 0), '#4a3424');
@@ -3056,18 +3078,8 @@ function survDraw(dt){
   if(B.mp) chatBubble(MP.me, PL.x, PL.y - 30);
   if(B.castT > 0){ g.globalAlpha = B.castT * 2.5; for(let a = 0; a < 16; a++){ const an = a / 16 * 6.28 + G.t * 8; P(PL.x + Math.cos(an) * 8, PL.y - 16 + Math.sin(an) * 3, B.wcol); } R(PL.x + 3, PL.y - 26, 2, 12, '#ffffff'); g.globalAlpha = 1; }
   if(B.shield){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(PL.x + Math.cos(an) * 11, PL.y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
-  const sw = B.swing, spr = swordFrame(B.wid, G.t), sc = Math.min(.6, (sw ? sw.R : svR()) / spr.W);
-  if(sw){
-    const k = sw.t / sw.dur;
-    for(const [a0, span] of sw.arcs){
-      const cur = a0 - span / 2 + span * sw.spins * k;
-      const TJ = [4, 9, 16][GQ()]; for(let j = 0; j < TJ; j++){ const an = cur - j * .08 * 16 / TJ; g.globalAlpha = (1 - j / TJ) * .85; const st = GQ() ? (j < 4 ? 1 : 2) : 3; for(let r = sw.R * .4; r <= sw.R + 1; r += st) P(PL.x + Math.cos(an) * r, PL.y - 2 + Math.sin(an) * r, j < 2 || r > sw.R - 2 ? '#ffffff' : B.wcol); }
-      if(Math.random() < .6) G.parts.push({ x: PL.x + Math.cos(cur) * sw.R, y: PL.y - 2 + Math.sin(cur) * sw.R, vx: Math.cos(cur + 1.57) * 60, vy: Math.sin(cur + 1.57) * 60, life: .2, max: .2, c: Math.random() < .5 ? '#ffffff' : B.wcol, grav: 0 });
-      g.globalAlpha = 1;
-      g.save(); g.translate(PL.x, PL.y - 2); g.rotate(cur); g.drawImage(spr.cv, -spr.gripX * sc, -spr.cy * sc, spr.W * sc, spr.H * sc); g.restore();
-    }
-  } else { g.save(); g.translate(PL.x + 3, PL.y); g.rotate(-1.2 + Math.sin(G.t * 3) * .05); const s2 = .4; g.drawImage(spr.cv, -spr.gripX * s2, -spr.cy * s2, spr.W * s2, spr.H * s2); g.restore(); }
-  for(const o of B.orbs || []){ const [ox, oy, a] = o; for(let i = -4; i <= 4; i++) P(ox + Math.cos(a + 1.57) * i, oy + Math.sin(a + 1.57) * i, Math.abs(i) < 2 ? '#ffffff' : (B.danceT > 0 ? '#ff8ad8' : B.wcol)); }
+  if(!B.dead) heroSword(PL.x, PL.y, B.swing, B.wid, B.wcol, svR());
+  for(const o of B.orbs || []) orbDraw(o[0], o[1], o[2], B.danceT > 0 ? '#ff8ad8' : B.wcol);
   const lowQ = !GQ();
   for(const s of B.shots){ if(lowQ){ R(s.x - 1, s.y - 1, 3, 3, B.wcol); P(s.x, s.y, '#ffffff'); continue; } if(s.dag){ for(let i = 0; i < 6; i++) P(s.x - Math.cos(s.a) * i, s.y - Math.sin(s.a) * i, i < 2 ? '#ffffff' : B.wcol); continue; } const c = B.wcol, len = 5; for(let i = -len; i <= len; i++){ const an = s.a + Math.PI / 2; P(s.x + Math.cos(an) * i + Math.cos(s.a) * (Math.abs(i) * -.4), s.y + Math.sin(an) * i + Math.sin(s.a) * (Math.abs(i) * -.4), Math.abs(i) < 2 ? '#ffffff' : c); if(s.big) P(s.x + Math.cos(an) * i, s.y + Math.sin(an) * i + 1, c); } }
   for(const b of B.blasts){ const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? (b.col || B.wcol) : '#ff9a3a';

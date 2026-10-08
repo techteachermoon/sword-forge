@@ -3488,8 +3488,8 @@ function setRoom(){
 function drawRank(){
   R(0, 26, VW, 408, '#140d0a');
   T('랭킹', 8, 31, { f: 'b' });
-  const etab = G.rankTab === 'endless';
-  [['forge', '강화'], ['endless', '무한 도전']].forEach(([k, lb], i) => { const on = (G.rankTab || 'forge') === k, x = 50 + i * 62; R(x, 29, 58, 16, on ? COL.ember : COL.ink); R(x + 1, 30, 56, 14, on ? '#3a281c' : '#1e150f'); T(lb, x + 29, 31, { f: 's', a: 'c', c: on ? COL.text : COL.dim }); hit('rk' + k, x, 29, 58, 16, () => { SFX.click(); G.rankTab = k; G.scroll.rank.y = 0; }); });
+  const etab = (G.rankTab || 'endless') === 'endless'; // 무한 도전 board comes first
+  [['endless', '무한 도전'], ['forge', '강화']].forEach(([k, lb], i) => { const on = (G.rankTab || 'endless') === k, x = 50 + i * 62; R(x, 29, 58, 16, on ? COL.ember : COL.ink); R(x + 1, 30, 56, 14, on ? '#3a281c' : '#1e150f'); T(lb, x + 29, 31, { f: 's', a: 'c', c: on ? COL.text : COL.dim }); hit('rk' + k, x, 29, 58, 16, () => { SFX.click(); G.rankTab = k; G.scroll.rank.y = 0; }); });
   const msgBox = (lines) => { panel(8, 60, 254, 26 + lines.length * 13, 'wood'); lines.forEach((ln, i) => T(ln, 18, 72 + i * 13, { f: i ? 's' : 'b', c: i ? COL.dim : COL.text })); };
   if(RK.status === 'nodb' || RK.status === 'err' || RK.status === 'init'){
     const lines = RK.status === 'err' ? ['랭킹을 불러오지 못했다.', ...wrap('잠시 후 다시 열어 보세요. 게임은 그대로 할 수 있다.', 's', 230)]

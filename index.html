@@ -290,7 +290,7 @@ function releaseAll(){ if(UI.dragR && UI.dragR.onUp) try{ UI.dragR.onUp(UI.px, U
 cv.addEventListener('lostpointercapture', e => { if(PRIM === e.pointerId && UI.down) endPointer(e, true); });
 addEventListener('touchend', e => { if(!e.touches.length) releaseAll(); }, { passive: true }); // no finger left on the glass: let go of everything
 addEventListener('touchcancel', e => { if(!e.touches.length) releaseAll(); }, { passive: true });
-addEventListener('blur', () => releaseAll());
+addEventListener('blur', () => { releaseAll(); G.wheel = null; });
 cv.addEventListener('pointercancel', e => endPointer(e, true));
 cv.addEventListener('pointerleave', e => { if(!UI.down){ UI.px = -99; UI.py = -99; } });
 cv.addEventListener('wheel', e => { const [x, y] = toLogical(e); const s = scrollAt(x, y); if(s){ e.preventDefault(); s.y = clamp(s.y + e.deltaY * .4, 0, s.max || 0); } }, { passive: false });
@@ -2117,7 +2117,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 10; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 11; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2173,7 +2173,20 @@ function mpGo(p){
 }
 function mpLobbyLeave(){ mpLeave(); MP.lobby = null; G.modal = null; }
 // quick chat: short fixed lines (safe for a class), shown over the speaker's head and in a small log
-const QCHAT = ['좋아!', '도와줘!', '보스 잡자!', '모여!', '고마워!', '잠깐만!', '가자!', 'ㅋㅋㅋ', '해줘(벅벅)']; // T opens the list in together mode
+const QCHAT = ['좋아!', '도와줘!', '보스 잡자!', '모여!', '고마워!', '잠깐만!', '가자!', 'ㅋㅋㅋ', '해줘(벅벅)']; // together: hold V for the wheel, or the 말하기 button
+// the V wheel: the lines sit on a ring around where the pointer was; the direction of the pointer picks one
+function drawChatWheel(){
+  const w = G.wheel; if(!w || !B || !B.mp){ G.wheel = null; return; }
+  const n = QCHAT.length, RR = 62, RX = 92, dx = UI.px - w.x, dy = UI.py - w.y, d = Math.hypot(dx, dy);
+  w.sel = d > 16 ? Math.round(((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 4) % (Math.PI * 2)) / (Math.PI * 2) * n) % n : -1;
+  g.globalAlpha = .5; for(let yy = -RR - 18; yy <= RR + 18; yy++){ const ww = Math.round((RX + 34) * Math.sqrt(Math.max(0, 1 - (yy / (RR + 18)) ** 2))); R(w.x - ww, w.y + yy, ww * 2, 1, '#0c0807'); } g.globalAlpha = 1;
+  QCHAT.forEach((t, i) => { const a = i / n * Math.PI * 2 - Math.PI / 2, x = w.x + Math.cos(a) * RX, y = w.y + Math.sin(a) * RR, on = i === w.sel, tw2 = tw(t, 's') + 8;
+    R(Math.round(x - tw2 / 2) - 1, Math.round(y) - 8, tw2 + 2, 15, COL.ink); R(Math.round(x - tw2 / 2), Math.round(y) - 7, tw2, 13, on ? '#e0782e' : '#2a3a4a');
+    T(t, x, y - 6, { f: 's', a: 'c', c: on ? '#2a0e02' : COL.text }); });
+  R(w.x - 2, w.y - 2, 5, 5, COL.ink); R(w.x - 1, w.y - 1, 3, 3, '#ffe070');
+  if(w.sel >= 0){ const a = w.sel / n * Math.PI * 2 - Math.PI / 2; for(let r = 6; r < RR - 14; r += 3) P(w.x + Math.cos(a) * r * RX / RR, w.y + Math.sin(a) * r, '#ffe070'); }
+  T('V를 떼면 말한다', w.x, w.y + RR + 12, { f: 's', a: 'c', c: COL.dim, ol: COL.ink });
+}
 function mpSay(i){ if(!MP.ch || !QCHAT[i] || G.t - (MP.chatT || -9) < 1.2) return; MP.chatT = G.t; mpSend('c', { i, nm: S.name }); mpChat({ id: MP.me, i, nm: S.name }); }
 // free typing too: 30 characters, one line every 1.5 s, the word filter on both ends (a filtered line is never shown)
 const chatClean = t => String(t || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
@@ -3134,7 +3147,7 @@ function survDraw(dt){
   else if(!B.over && !B.pick && !B.paused) hit('bview', 0, vy, VW, vh, null, { onDown: (x, y) => { if(G.t - B.lastDown < .28 || (B.dashCh > 0 && G.t - (B.lastDash || -9) < .35)) svDash(); B.lastDown = G.t; B.joy = { sx: x, sy: y, x, y }; }, onMove: (x, y) => { if(B.joy){ B.joy.x = x; B.joy.y = y; } }, onUp: () => { B.joy = null; } });
   // ---- HUD strip over the bottom of the battlefield (two rows on a narrow screen)
   const compact = VW < 480, sh2 = compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
-  if(B.mp && !B.over) button('chat', VW - 62, vy + 18, 58, 16, G.chatOpen ? '닫기 · T' : '말하기 · T', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
+  if(B.mp && !B.over) button('chat', VW - 62, vy + 18, 58, 16, G.chatOpen ? '닫기' : '말하기 · V', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
   if(B.mp && G.chatOpen && !B.over){ const cw = Math.min(86, Math.floor((VW - 12) / 3) - 4), cx0 = Math.round((VW - (cw + 4) * 3 + 4) / 2); QCHAT.forEach((t, i) => button('qc' + i, cx0 + (i % 3) * (cw + 4), sy0 - 78 + Math.floor(i / 3) * 24, cw, 21, t, null, () => { mpSay(i); G.chatOpen = false; }, { small: true, kind: 'blue' }));
     button('qct', cx0, sy0 - 102, (cw + 4) * 3 - 4, 21, '직접 입력하기 (Enter)', null, () => { G.chatOpen = false; chatInput(); }, { small: true, kind: 'gold' }); }
   g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
@@ -3150,6 +3163,7 @@ function survDraw(dt){
     { const on = !!S.opts.bossT; bx -= ow + 4; button('bossT', bx, rowY, ow, 30, on ? '보스 ON' : '보스 OFF', '우선 · E', () => toggleBossT(), { kind: on ? 'danger' : 'normal', dis: !!B.over, small: true }); }
     bx -= rw + 4; button('retreat', bx, rowY, rw, 30, '귀환', null, () => svEnd(), { dis: !!B.over, small: true }); }
   if(B.cleared === 0 && B.st < 10 && !B.pick && !G.chatOpen){ const hl = wrap('끌어서 이동 · 두 번 톡(스페이스)으로 구르기 · 무기는 알아서 휘두른다 · Esc 일시정지', 's', Math.min(VW - 20, 320)); hl.forEach((ln, k) => T(ln, VW / 2, sy0 - 14 - (hl.length - 1 - k) * 11, { f: 's', a: 'c', c: COL.text, ol: COL.ink })); }
+  if(G.wheel) drawChatWheel();
   if(B.pick){ dim(0, 0, VW, VH, .35); centered(survPickDraw); }
   if(B.paused){ dim(0, 0, VW, VH, .5); centered(survPauseDraw); }
   if(B.banner && !B.paused && !B.pick){ const bn = B.banner; bn.t += dt; if(bn.t > 2) B.banner = null; else { const a = bn.t < .2 ? bn.t / .2 : bn.t > 1.6 ? (2 - bn.t) / .4 : 1; g.globalAlpha = a; T(bn.text, VW / 2, vy + 60 - (bn.t < .1 ? (1 - bn.t * 10) * 10 : 0), { f: 'b', z: 3, a: 'c', c: bn.warn || B.boss ? '#ff5a4a' : '#ffd27a', ol: COL.ink }); T(bn.sub, VW / 2, vy + 102, { f: 'b', a: 'c', c: COL.text, ol: COL.ink }); g.globalAlpha = 1; } }
@@ -4022,7 +4036,7 @@ function drawModal(){
     sec('속성 각인', '#8ad8ff'); p('+5, +15, +25에 1·2·3차 칸이 열린다. 보스가 떨구는 각인석으로 새긴다. 각인석의 속성은 정해져 나온다. 2차는 귀하고 3차는 전설급이다. 새길 수 있으면 대장간 오른쪽 위 「각인」 버튼이 반짝인다. 칸의 「새기기」를 누르면 맞는 각인석이 빛난다.');
     sec('사냥터'); p('끌어서 이동, 무기는 알아서 휘두른다. 구르기는 버튼·두 번 톡·스페이스, 또는 이동하는 손가락은 그대로 두고 다른 손가락으로 화면을 톡. 스테이지를 깰 때마다 카드를 고른다. F 필살기, E 보스 우선 공격 켜기/끄기, Esc 일시정지.'); p('몬스터를 한 방에 크게 넘치게 잡으면(압도 ▶▶) 스테이지가 훨씬 빨리 끝난다. 보스는 가끔 가호 III·IV나 내구도 보수권을 떨군다.', COL.dim);
     sec('무한 도전', '#ffd27a'); p('특성 하나를 들고 끝없이 올라간다. 층마다 몬스터가 단단해지고 많아진다. 카드는 5층마다 나오는 보스에게서만 얻는다. 점수와 시간은 랭킹에 남는다.');
-    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 인원(2~6인)과 방 번호를 고르면 대기실에서 기다리다, 같은 반(그룹) 코드·같은 인원·같은 방을 고른 친구가 다 모이면 다 같이 출발한다. 게임 중인 방에는 못 들어간다. 한 전장에서 같은 몬스터를 함께 잡고, 몬스터는 가까운 사람을 노리며 인원이 많을수록 단단하고 많아진다. 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 왼쪽 위 파티 창에 동료 체력·상태·딜량이 나온다. 골드는 없고, 기록은 랭킹의 인원별(2인~6인) 탭에 남는다. 오른쪽 위 「말하기」로 빠른 채팅이나 직접 입력(30자)을 보낼 수 있다. 키보드는 T가 빠른 채팅 목록, Enter가 직접 입력. 욕설·비방은 걸러진다.');
+    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 인원(2~6인)과 방 번호를 고르면 대기실에서 기다리다, 같은 반(그룹) 코드·같은 인원·같은 방을 고른 친구가 다 모이면 다 같이 출발한다. 게임 중인 방에는 못 들어간다. 한 전장에서 같은 몬스터를 함께 잡고, 몬스터는 가까운 사람을 노리며 인원이 많을수록 단단하고 많아진다. 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 왼쪽 위 파티 창에 동료 체력·상태·딜량이 나온다. 골드는 없고, 기록은 랭킹의 인원별(2인~6인) 탭에 남는다. 오른쪽 위 「말하기」로 빠른 채팅이나 직접 입력(30자)을 보낼 수 있다. 키보드는 V를 누른 채 마우스로 고르고 떼면 빠른 채팅, Enter가 직접 입력. 욕설·비방은 걸러진다.');
     sec('버벅일 때', COL.dim); p('설정(또는 전투 일시정지)의 「그래픽」을 보통·낮음으로 내리면 이펙트가 줄고 훨씬 부드러워진다. 「자동」은 버벅이면 알아서 낮춘다. 데미지 숫자·몬스터 테두리도 따로 끌 수 있다.');
     sec('단축키', COL.dim); p('대장간: 스페이스 강화 · S 판매 · G 가호 · B 축복 · R 보수 · V 보관함 · E 각인 / 전투: 방향키·WASD 이동 · 스페이스 구르기 · F 필살기 · E 보스 우선 · Esc 일시정지', COL.dim);
     const top = 40, hh = 380, scr = G.scroll.help || (G.scroll.help = { y: 0 }), total = rows.reduce((a, r) => a + r.h, 0);
@@ -4342,7 +4356,7 @@ addEventListener('keydown', e => {
   if(e.ctrlKey || e.metaKey || e.altKey){ releaseKeys(); return; }
   audioInit();
   const kk = keyOf(e), act = e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter';
-  if(e.code === 'KeyT' && !e.repeat && MP.ch && G.scr === 'battle' && B && B.mp){ e.preventDefault(); G.chatOpen = !G.chatOpen; return; } // together: T opens the quick-chat list, click a line to say it
+  if(e.code === 'KeyV' && MP.ch && G.scr === 'battle' && B && B.mp){ e.preventDefault(); if(!e.repeat && !G.wheel){ const inV = UI.px >= 0 && UI.py >= SV.y0 && UI.px < VW && UI.py < VH; G.wheel = { x: inV ? clamp(UI.px, 130, VW - 130) : VW / 2, y: inV ? clamp(UI.py, SV.y0 + 84, VH - 100) : SV.y0 + SV.h / 2, sel: -1 }; G.chatOpen = false; } return; } // together: hold V, point, let go (like a ping wheel)
   if((e.key === 'Enter' || e.code === 'NumpadEnter') && MP.ch && ((G.scr === 'battle' && B && B.mp) || MP.lobby)){ e.preventDefault(); chatInput(); return; } // together: Enter = chat (Space still rolls)
   if(G.scr === 'battle' && B && B.surv && (e.key === 'Escape' || kk === 'p')){ svPause(); return; }
   if(G.scr === 'battle' && B && B.surv && !e.repeat && kk === 'e'){ toggleBossT(); return; }
@@ -4364,7 +4378,8 @@ addEventListener('keydown', e => {
     }
   }
 });
-addEventListener('keyup', e => { if(e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt' || e.key === 'OS'){ releaseKeys(); return; } /* while ⌘/Ctrl was down the OS can swallow other keys' "up" */ KEYS[keyOf(e)] = false; if(e.key && e.key.length === 1) KEYS[e.key.toLowerCase()] = false; });
+addEventListener('keyup', e => {
+  if(e.code === 'KeyV' && G.wheel){ const w = G.wheel; G.wheel = null; if(w.sel >= 0) mpSay(w.sel); return; } if(e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt' || e.key === 'OS'){ releaseKeys(); return; } /* while ⌘/Ctrl was down the OS can swallow other keys' "up" */ KEYS[keyOf(e)] = false; if(e.key && e.key.length === 1) KEYS[e.key.toLowerCase()] = false; });
 // fullscreen: the real thing when the page allows it, otherwise just drop the margins
 function toggleFS(){
   if(document.fullscreenElement){ try{ document.exitFullscreen(); }catch(e){} return; }

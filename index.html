@@ -1899,7 +1899,8 @@ function cleanRow(id, d){
   const wep = WL[d.wep] ? d.wep : 'c';
   const es = clamp(Math.floor(+d.es || 0), 0, 1e12), et = clamp(Math.floor(+d.et || 0), 0, 1e7), ed = clamp(Math.floor(+d.ed || 0), 0, 1e5);
   const ew = typeof d.ew === 'string' && WEP[d.ew] ? d.ew : '';
-  return { id, name, best, stage, diff, title, wep, es, et, ed, ew };
+  const cx = clamp(Math.floor(+d.cx || 0), 0, WTOTAL());
+  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx };
 }
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
@@ -1909,10 +1910,12 @@ function rankPush(){
     RK.timer = null;
     if(!RK.db || !RK.uid || RK.writable === false || !S.name || RK.busy) return;
     const cb = clearedBest(), eb = S.eb || { s: 0, t: 0, d: 0 }, doc = { name: S.name, title: S.title || '', best: S.best, stage: cb.s, diff: cb.d, sv: 2, wep: wepOf(S.bestId).line, es: eb.s || 0, et: eb.t || 0, ed: eb.d || 0, ew: WEP[eb.w] ? eb.w : '' };
+    if(!RK.noCx) doc.cx = foundCount(); /* 도감: weapons found, over all weapons */
     const key = JSON.stringify(doc); if(key === RK.last) return;
     RK.busy = true;
     try{ await RK.db.doc('scores/' + RK.uid).set(doc); RK.last = key; RK.writable = true; if(RK.web) setTimeout(rankRefresh, 300); }
-    catch(e){ if(e && (e.code === 'invalid_argument' || e.code === 'not_granted' || e.status === 401 || e.status === 403)) RK.writable = false; }
+    catch(e){ if(RK.web && !RK.noCx && e && e.status === 400 && /cx/.test(e.message || '')){ RK.noCx = true; RK.busy = false; rankPush(); return; } /* the board has no 도감 column yet (supabase_codex.sql): keep saving without it */
+      if(e && (e.code === 'invalid_argument' || e.code === 'not_granted' || e.status === 401 || e.status === 403)) RK.writable = false; }
     RK.busy = false;
   }, 1500);
 }
@@ -3670,10 +3673,15 @@ function drawRank(){
       const nw = T(r.name, 74, y + 3, { f: 'b', c: COL.text });
       if(r.title) T(r.title, 78 + nw, y + 5, { f: 's', c: COL.ember });
       const wc = glowOf(wid, G.t) || COL.text;
-      T(etab && !wok ? '무기 기록 없음' : '+' + wL + ' ' + (wok && (etab || WEP[wid].L === r.best) ? wName(wid) : r.best >= 10 ? '(무기 고르는 중)' : ''), 74, y + 19, { f: 's', c: etab && !wok ? COL.faint : wc });
+      const ww = T(etab && !wok ? '무기 기록 없음' : '+' + wL + ' ' + (wok && (etab || WEP[wid].L === r.best) ? wName(wid) : r.best >= 10 ? '(무기 고르는 중)' : ''), 74, y + 19, { f: 's', c: etab && !wok ? COL.faint : wc });
       if(etab){ T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); T(fmt(r.es) + '점 · ' + fmtT(r.et), 260, y + 20, { f: 's', a: 'r', c: COL.dim }); return; }
-      T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
-      T(r.stage ? DIFF[r.diff][0] + ' ' + stLabel(r.stage) : '-', 260, y + 20, { f: 's', a: 'r', c: r.stage && r.diff !== 'normal' ? DIFF[r.diff][1] : COL.dim }); // stage, coloured by the difficulty it was reached on
+      const bw = T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
+      const sw2 = T(r.stage ? DIFF[r.diff][0] + ' ' + stLabel(r.stage) : '-', 260, y + 20, { f: 's', a: 'r', c: r.stage && r.diff !== 'normal' ? DIFF[r.diff][1] : COL.dim }); // stage, coloured by the difficulty it was reached on
+      if(r.cx){ // 도감 completion: next to +level, or beside the stage when a long name is in the way
+        const top = 80 + nw + (r.title ? tw(r.title, 's') + 4 : 0), bot = 78 + ww;
+        for(const cs of ['도감 ' + r.cx + '/' + WTOTAL(), '도감 ' + Math.round(r.cx / WTOTAL() * 100) + '%']){ const cw = tw(cs, 's');
+          if(top < 254 - bw - cw){ T(cs, 254 - bw, y + 5, { f: 's', a: 'r', c: COL.dim }); break; }
+          if(bot < 254 - sw2 - cw){ T(cs, 254 - sw2, y + 20, { f: 's', a: 'r', c: COL.dim }); break; } } }
     });
     g.restore(); scrollbar(st, top, h);
     if(RK.writable === false){ wrap('기록을 올리려면 게임을 공유한 사람이 링크 권한을 Contributor 이상으로 바꿔야 한다.', 's', 250).forEach((ln, i) => T(ln, 10, 384 + i * 11, { f: 's', c: COL.faint })); }

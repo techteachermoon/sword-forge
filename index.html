@@ -1145,15 +1145,16 @@ const sellP = L => L < 1 ? 0 : Math.round((L <= 30 ? BUILD[L] : BUILD[30] * Math
 const band = L => L < 15 ? 1 : L < 25 ? 2 : L < 30 ? 3 : 4;
 const BAND_START = [0, 5, 15, 25, 30];
 // 가호: spent before the hammer falls (it only matters from +5). Inside a band each level asks for one more:
-// (tickets are gone: 가호 is paid in gold per swing, see GUARD_K)
+// (tickets are gone: 가호 is paid in gold per swing, see guardBase)
 const gTier = L => L < 5 ? 0 : band(L);
 const GH = ['', '가호 I', '가호 II', '가호 III', '가호 IV'];
 const GH_BAND = ['', '+5~+14', '+15~+24', '+25~+29', '+30~+34'];
 // 축복 comes in four grades like 가호 (one per band), priced so a high swing's 축복 is a real choice, not loose change
 const BLN = ['', '축복 I', '축복 II', '축복 III', '축복 IV'];
-// 가호·축복·보수 are paid in gold on the spot (no tickets to buy): a share of this level's 강화비.
-// 가호 ×0.5 (+5~+14), ×1 (+15~+24), ×2 (+25~+29), ×3 (+30~); 축복 ×0.4; 보수 ×0.6 for each crack
-const GUARD_K = L => L < 5 ? 0 : L < 15 ? .5 : L < 25 ? 1 : L < 30 ? 2 : 3;
+// 가호·축복·보수 are paid in gold on the spot (no tickets to buy).
+// 가호 keeps the old ticket prices (count × price): +5 30 … +14 300, +15 800 … +24 8,000, +25 30만 … +29 150만,
+// and +30 up (가호 IV used to be drop-only) 500만 + 100만 a level. 축복 = 강화비 ×0.4; 보수 = 강화비 ×0.6 for each crack.
+const guardBase = L => L < 5 ? 0 : L < 15 ? (L - 4) * 30 : L < 25 ? (L - 14) * 800 : L < 30 ? (L - 24) * 300000 : 5000000 + (L - 30) * 1000000;
 // +0 → +20 climbs a steady ×1.12 a level (83 → 800, ~10× in all, it used to be 200×), then ×1.075 a level above +20.
 const ATK = L => Math.round(800 * Math.pow(L <= 20 ? 1.12 : 1.075, L - 20));
 const PRICE = { wp: 6000 };
@@ -1462,7 +1463,7 @@ const RAR = { C: ['일반', '#9aa4b4'], R: ['희귀', '#5a9aff'], L: ['전설', 
 const en = k => (S.ench && S.ench[k]) || 0;
 const enchKeys = () => Object.keys(S.ench || {}).filter(k => ENCH[k] && S.ench[k] > 0);
 const costNow = L => r5(cost(L) * (1 - .1 * en('thrift')));
-const guardCost = L => GUARD_K(L) ? r5(costNow(L) * GUARD_K(L)) : 0;
+const guardCost = L => guardBase(L);
 const blessCost = L => r5(costNow(L) * .4);
 const repairCost = L => r5(costNow(L) * .6 * Math.max(1, crackN()));
 const sellNow = L => L < 1 ? 0 : Math.round(sellP(L) * (1 + .2 * en('merchant')) / 10) * 10;
@@ -3822,7 +3823,7 @@ function drawModal(){
     const rows = [], sec = (t, c) => rows.push({ h: 18, d: y => { R(10, y + 14, 250, 1, '#5a3e2a'); T(t, 10, y + 2, { f: 'b', c: c || COL.ember }); } });
     const p = (t, c) => { const ls = wrap(t, 's', 240); rows.push({ h: ls.length * 11 + 4, d: y => ls.forEach((ln, i) => T(ln, 14, y + i * 11, { f: 's', c: c || COL.text })) }); };
     sec('강화'); p('강화하기를 누르고 게이지 가운데에서 누르면 PERFECT(성공률↑). +10, +20에서 무기 종류를 고른다.'); p('높을수록 성공률이 낮다. +29→+30은 3%, 최고는 +35.', COL.dim);
-    sec('파괴 · 가호 · 균열', COL.bad); p('+5부터 실패하면 부서질 수 있다. 대장간의 「가호」 스위치를 켜 두면 두들길 때마다 가호비(골드)를 내고, 실패해도 잘 안 부서진다. 가호비는 강화비의 0.5배(+5~+14), 1배(+15~+24), 2배(+25~+29), 3배(+30 이상). 가호 없이 두들기면 실패의 상당수가 그대로 파괴로 이어진다.'); p('「축복」 스위치는 강화비의 0.4배를 더 내고 성공 확률을 올린다. 가호를 써도 낮은 확률(+0 0.1% → +20 3.5% → +29 9% → +34 11.5%)로는 부서진다. 실패할 때마다 칼날에 균열이 쌓여 이 확률이 오른다. 「보수」를 누르면 골드를 내고 균열을 메운다(균열 하나에 강화비의 0.6배).', COL.dim);
+    sec('파괴 · 가호 · 균열', COL.bad); p('+5부터 실패하면 부서질 수 있다. 대장간의 「가호」 스위치를 켜 두면 두들길 때마다 가호비(골드)를 내고, 실패해도 잘 안 부서진다. 가호비는 단계마다 오른다: +5 30 G … +14 300 G, +15 800 G … +24 8,000 G, +25 30만 G … +29 150만 G, +30부터 500만 G에 한 단계마다 100만 G씩. 가호 없이 두들기면 실패의 상당수가 그대로 파괴로 이어진다.'); p('「축복」 스위치는 강화비의 0.4배를 더 내고 성공 확률을 올린다. 가호를 써도 낮은 확률(+0 0.1% → +20 3.5% → +29 9% → +34 11.5%)로는 부서진다. 실패할 때마다 칼날에 균열이 쌓여 이 확률이 오른다. 「보수」를 누르면 골드를 내고 균열을 메운다(균열 하나에 강화비의 0.6배).', COL.dim);
     sec('축복 주문서'); p('켜 두면 성공률이 오른다. 높은 단계일수록 한 번에 여러 장 쓴다. 파괴 확률은 줄이지 못한다.');
     sec('보관함'); p('오른쪽 위 「보관함」. 아끼는 검을 걸어 두고 새 검을 두들길 수 있다. 꺼내면 인챈트·각인·균열이 그대로다.');
     sec('속성 각인', '#8ad8ff'); p('+5, +15, +25에 1·2·3차 칸이 열린다. 보스가 떨구는 각인석으로 새긴다. 각인석의 속성은 정해져 나온다. 2차는 귀하고 3차는 전설급이다. 새길 수 있으면 대장간 오른쪽 위 「각인」 버튼이 반짝인다. 칸의 「새기기」를 누르면 맞는 각인석이 빛난다.');

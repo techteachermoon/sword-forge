@@ -2199,7 +2199,7 @@ function drawChatWheel(){
 function chatAllow(){ const now = performance.now() / 1000; MP.chatTs = (MP.chatTs || []).filter(t => now - t < 5); if(MP.chatTs.length >= 5 || now - (MP.chatTs[MP.chatTs.length - 1] || -9) < .3) return false; MP.chatTs.push(now); return true; }
 function mpSay(i){ if(!MP.ch || !QCHAT[i]) return; if(!chatAllow()){ toast('조금 천천히'); return; } mpSend('c', { i, nm: S.name }); mpChat({ id: MP.me, i, nm: S.name }); }
 // free typing too: 30 characters, one line every 1.5 s, the word filter on both ends (a filtered line is never shown)
-const chatClean = t => String(t || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
+const chatClean = t => String(t || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
 function mpSayText(t){ // true when it went out (the box keeps the text otherwise)
   t = chatClean(t); if(!t || !MP.ch) return true;
   if(badName(t)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있다'); return false; }
@@ -2209,7 +2209,7 @@ function mpSayText(t){ // true when it went out (the box keeps the text otherwis
 function chatInput(){ // a plain one-line box over the canvas (16px text so phones don't zoom in)
   const old = document.getElementById('chatbox'); if(old){ old.remove(); return; }
   const d = document.createElement('div'); d.id = 'chatbox'; d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;gap:6px;padding:8px;background:rgba(12,8,7,.92)';
-  const inp = document.createElement('input'); inp.maxLength = 30; inp.placeholder = '할 말 (30자)'; inp.enterKeyHint = 'send'; inp.autocomplete = 'off';
+  const inp = document.createElement('input'); inp.maxLength = 40; inp.placeholder = '할 말 (40자)'; inp.enterKeyHint = 'send'; inp.autocomplete = 'off';
   inp.style.cssText = 'flex:1;min-width:0;font:16px sans-serif;padding:8px;border:1px solid #6e4c32;border-radius:4px;background:#120b08;color:#efe2c8';
   const btn = (label, fn, main) => { const x = document.createElement('button'); x.textContent = label; x.style.cssText = 'padding:8px 12px;border:0;border-radius:4px;font:bold 15px sans-serif;background:' + (main ? '#e0782e;color:#2a0e02' : '#4a3a2e;color:#efe2c8'); x.onclick = fn; d.appendChild(x); };
   const send = () => { if(!d.isConnected) return; if(!mpSayText(inp.value)){ inp.focus(); return; } d.remove(); try{ cv.focus(); }catch(e){} };
@@ -2384,10 +2384,10 @@ function heroSword(x, y, sw, wid, col, R0){
 function orbDraw(ox, oy, a, col){ for(let i = -4; i <= 4; i++) P(ox + Math.cos(a + 1.57) * i, oy + Math.sin(a + 1.57) * i, Math.abs(i) < 2 ? '#ffffff' : col); }
 function chatBubble(id, x, y){ // the last quick-chat line from this player, for 2.5 s
   const c = (MP.chat || []).filter(m => m.id === id && G.t - m.at < 2.5).pop(); if(!c) return;
-  let t = c.t; while(t.length > 4 && tw(t, 's') > 120) t = t.slice(0, -2) + '…';
-  const w = tw(t, 's') + 8; g.globalAlpha = Math.min(1, (2.5 - (G.t - c.at)) * 3);
-  R(Math.round(x - w / 2) - 1, y - 1, w + 2, 14, COL.ink); R(Math.round(x - w / 2), y, w, 12, '#fff6e0'); P(x, y + 12, COL.ink); P(x - 1, y + 12, '#fff6e0');
-  T(t, x, y + 1, { f: 's', a: 'c', c: '#2a1c14' }); g.globalAlpha = 1;
+  const ls = wrap(c.t, 's', 110).slice(0, 3), w = Math.max(...ls.map(l => tw(l, 's'))) + 8, h = ls.length * 11 + 1, top = y + 12 - h; // a long line wraps (up to 3 rows) instead of being cut
+  g.globalAlpha = Math.min(1, (2.5 - (G.t - c.at)) * 3);
+  R(Math.round(x - w / 2) - 1, top - 1, w + 2, h + 2, COL.ink); R(Math.round(x - w / 2), top, w, h, '#fff6e0'); P(x, y + 12, COL.ink); P(x - 1, y + 12, '#fff6e0');
+  ls.forEach((l, i) => T(l, x, top + 1 + i * 11, { f: 's', a: 'c', c: '#2a1c14' })); g.globalAlpha = 1;
 }
 function peerDraw(o){
   const nm = badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8);
@@ -2398,7 +2398,7 @@ function peerDraw(o){
   if(o.shd){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(x + Math.cos(an) * 11, y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
   heroSword(x, y, o.sw && o.sw.t < o.sw.dur ? o.sw : null, o.wid, col, 40);
   for(let i = 0; i < (o.ob || 0); i++){ const a = G.t * 6 + i / o.ob * Math.PI * 2; orbDraw(x + Math.cos(a) * 32, y - 2 + Math.sin(a) * 28, a, col); }
-  chatBubble(o.id, x, y - 32);
+  chatBubble(o.id, x, y - 40);
   T(nm, x, y - 26, { f: 's', a: 'c', c: '#bfe0ff', ol: COL.ink });
   R(x - 8, y - 15, 16, 2, COL.ink); R(x - 8, y - 15, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a');
 }
@@ -3146,7 +3146,7 @@ function survDraw(dt){
   if(B.mp){ const my = vy + (fz.length ? 30 : 18); drawDmgMeter(4, my);
     // the last few quick-chat lines, under the party panel
     const log = (MP.chat || []).filter(m => G.t - m.at < 8), ly = my + (1 + Object.values(MP.peers).filter(o => G.t - o.seen < 5).length) * 12 + 16;
-    log.forEach((m, i) => { g.globalAlpha = Math.min(1, (8 - (G.t - m.at)) / 1.5); let ln = m.nm.slice(0, 6) + ': ' + m.t; while(ln.length > 6 && tw(ln, 's') > Math.min(VW - 70, 240)) ln = ln.slice(0, -2) + '…'; T(ln, 4, ly + i * 11, { f: 's', c: m.id === MP.me ? '#ffe070' : COL.text, ol: COL.ink }); }); g.globalAlpha = 1; }
+    let ry = ly; log.forEach(m => { g.globalAlpha = Math.min(1, (8 - (G.t - m.at)) / 1.5); wrap(m.nm.slice(0, 6) + ': ' + m.t, 's', Math.min(VW - 70, 240)).forEach(ln => { T(ln, 4, ry, { f: 's', c: m.id === MP.me ? '#ffe070' : COL.text, ol: COL.ink }); ry += 11; }); }); g.globalAlpha = 1; } /* long lines wrap, nothing cut off */
   g.restore();
   if(!B.over && PL.hp < PL.max * .3){ g.globalAlpha = .25 + .15 * Math.sin(G.t * 8); for(let i = 0; i < 6; i++){ g.globalAlpha *= .7; R(0, vy + i, VW, 1, '#ff2a1a'); R(0, vy + vh - 1 - i, VW, 1, '#ff2a1a'); R(i, vy, 1, vh, '#ff2a1a'); R(VW - 1 - i, vy, 1, vh, '#ff2a1a'); } g.globalAlpha = 1; }
   if(B.bossFx){ const k = B.bossFx.t / 1.2; g.globalAlpha = (1 - k) * .35; for(let i = 0; i < 10; i++){ R(0, vy + i * 2, VW, 2, '#5a0000'); R(0, vy + vh - (i + 1) * 2, VW, 2, '#5a0000'); } g.globalAlpha = 1; }
@@ -4046,7 +4046,7 @@ function drawModal(){
     sec('속성 각인', '#8ad8ff'); p('+5, +15, +25에 1·2·3차 칸이 열린다. 보스가 떨구는 각인석으로 새긴다. 각인석의 속성은 정해져 나온다. 2차는 귀하고 3차는 전설급이다. 새길 수 있으면 대장간 오른쪽 위 「각인」 버튼이 반짝인다. 칸의 「새기기」를 누르면 맞는 각인석이 빛난다.');
     sec('사냥터'); p('끌어서 이동, 무기는 알아서 휘두른다. 구르기는 버튼·두 번 톡·스페이스, 또는 이동하는 손가락은 그대로 두고 다른 손가락으로 화면을 톡. 스테이지를 깰 때마다 카드를 고른다. F 필살기, E 보스 우선 공격 켜기/끄기, Esc 일시정지.'); p('몬스터를 한 방에 크게 넘치게 잡으면(압도 ▶▶) 스테이지가 훨씬 빨리 끝난다. 보스는 가끔 가호 III·IV나 내구도 보수권을 떨군다.', COL.dim);
     sec('무한 도전', '#ffd27a'); p('특성 하나를 들고 끝없이 올라간다. 층마다 몬스터가 단단해지고 많아진다. 카드는 5층마다 나오는 보스에게서만 얻는다. 점수와 시간은 랭킹에 남는다.');
-    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 인원(2~6인)과 방 번호를 고르면 대기실에서 기다리다, 같은 반(그룹) 코드·같은 인원·같은 방을 고른 친구가 다 모이면 다 같이 출발한다. 게임 중인 방에는 못 들어간다. 한 전장에서 같은 몬스터를 함께 잡고, 몬스터는 가까운 사람을 노리며 인원이 많을수록 단단하고 많아진다. 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 왼쪽 위 파티 창에 동료 체력·상태·딜량이 나온다. 골드는 없고, 기록은 랭킹의 인원별(2인~6인) 탭에 남는다. 오른쪽 위 「말하기」로 빠른 채팅이나 직접 입력(30자)을 보낼 수 있다. 키보드는 V를 누른 채 마우스로 고르고 떼면 빠른 채팅, Enter가 직접 입력. 욕설·비방은 걸러진다.');
+    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 인원(2~6인)과 방 번호를 고르면 대기실에서 기다리다, 같은 반(그룹) 코드·같은 인원·같은 방을 고른 친구가 다 모이면 다 같이 출발한다. 게임 중인 방에는 못 들어간다. 한 전장에서 같은 몬스터를 함께 잡고, 몬스터는 가까운 사람을 노리며 인원이 많을수록 단단하고 많아진다. 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 왼쪽 위 파티 창에 동료 체력·상태·딜량이 나온다. 골드는 없고, 기록은 랭킹의 인원별(2인~6인) 탭에 남는다. 오른쪽 위 「말하기」로 빠른 채팅이나 직접 입력(40자)을 보낼 수 있다. 키보드는 V를 누른 채 마우스로 고르고 떼면 빠른 채팅, Enter가 직접 입력. 욕설·비방은 걸러진다.');
     sec('버벅일 때', COL.dim); p('설정(또는 전투 일시정지)의 「그래픽」을 보통·낮음으로 내리면 이펙트가 줄고 훨씬 부드러워진다. 「자동」은 버벅이면 알아서 낮춘다. 데미지 숫자·몬스터 테두리도 따로 끌 수 있다.');
     sec('단축키', COL.dim); p('대장간: 스페이스 강화 · S 판매 · G 가호 · B 축복 · R 보수 · V 보관함 · E 각인 / 전투: 방향키·WASD 이동 · 스페이스 구르기 · F 필살기 · E 보스 우선 · Esc 일시정지', COL.dim);
     const top = 40, hh = 380, scr = G.scroll.help || (G.scroll.help = { y: 0 }), total = rows.reduce((a, r) => a + r.h, 0);
@@ -4095,7 +4095,7 @@ function drawModal(){
     T('다 모이면 바로 출발 · 일시정지 없음', VW / 2, y + 62 + L.size * 20 + 4, { f: 's', a: 'c', c: COL.faint });
     [0, 6, 5].forEach((qi, j) => button('lqc' + j, x + 14 + j * 53, y + 200, 49, 20, QCHAT[qi], null, () => mpSay(qi), { small: true, kind: 'blue' }));
     button('lqct', x + 173, y + 200, 49, 20, '입력', null, () => chatInput(), { small: true, kind: 'gold' });
-    { const c = (MP.chat || []).slice(-1)[0]; if(c && G.t - c.at < 6) T(c.nm.slice(0, 6) + ': ' + c.t, VW / 2, y + 186, { f: 's', a: 'c', c: c.id === MP.me ? '#ffe070' : COL.text }); }
+    { const c = (MP.chat || []).slice(-1)[0]; if(c && G.t - c.at < 6){ const ls = wrap(c.nm.slice(0, 6) + ': ' + c.t, 's', 200).slice(-2); ls.forEach((l, i) => T(l, VW / 2, y + 186 - (ls.length - 1 - i) * 11, { f: 's', a: 'c', c: c.id === MP.me ? '#ffe070' : COL.text })); } }
     button('lbyx', x + 14, y + 226, 208, 28, '나가기', null, () => mpLobbyLeave(), { small: true, kind: 'danger' });
   } else if(m.k === 'vault'){
     const n = S.vcap, h = 118 + n * 46;

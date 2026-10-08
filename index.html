@@ -9,7 +9,7 @@
 html,body{height:100%;touch-action:none;overscroll-behavior:none}
 body{margin:0;background:var(--bg);color:var(--text);padding:0;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;font-family:G11,"Malgun Gothic",sans-serif;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
 #wrap{position:relative;line-height:0}
-#screen{display:block;touch-action:none;outline:none;image-rendering:pixelated;image-rendering:crisp-edges}
+#screen{display:block;touch-action:none;outline:none}
 body.max{padding:0}body.max #screen,:fullscreen #screen{box-shadow:none}
 #nick{position:absolute;display:none;border:0;outline:0;background:transparent;color:var(--text);font-family:G11,"Malgun Gothic",sans-serif;padding:0;margin:0;text-align:center;caret-color:var(--ember);-webkit-user-select:text;user-select:text}
 #boot{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font:14px/1.4 "Malgun Gothic",sans-serif;line-height:1.4}
@@ -41,8 +41,11 @@ function fit(){
   SCALE = s;
   lc.width = FW; lc.height = FH; g.imageSmoothingEnabled = false;
   const dpr = window.devicePixelRatio || 1;
-  KX = Math.max(1, Math.min([1, 2, 4][GQ()], Math.ceil(s * dpr))); /* low graphics: the browser scales the small canvas up instead of us */
+  KX = Math.max(1, Math.min([2, 3, 4][GQ()], Math.ceil(s * dpr))); /* lower graphics: a smaller backing canvas */
   cv.width = FW * KX; cv.height = FH * KX;
+  // the browser stretches the canvas the rest of the way. Nearest-neighbour only when that stretch is (nearly) whole pixels;
+  // at an odd stretch like ×2.2 it made 1-pixel strokes alternate 2 and 3 pixels wide and Hangul looked broken
+  { const f = s * dpr / KX, fr = f - Math.floor(f); cv.style.imageRendering = f >= 1 && (fr < .12 || fr > .9) ? 'pixelated' : 'auto'; }
   cv.style.width = aw + 'px';
   cv.style.height = ah + 'px';
   sx.imageSmoothingEnabled = false;
@@ -148,6 +151,7 @@ function drawTinted(src, x, y, color, alpha = 1, sc = 1){
 
 // ---- pixel text (binarized, cached) ----
 const FONT = { r: '12px G11', b: '12px G11B', s: '10px G9' };
+const FONT4 = { r: '48px G11', b: '48px G11B', s: '40px G9' }; // the same, at 4× (see textImg)
 const FBASE = { r: 11, b: 11, s: 9 }; // baseline offset inside the line box
 const FLH = { r: 13, b: 13, s: 11 };
 const TC = new Map();
@@ -159,11 +163,18 @@ function textImg(str, f, color, ol){
   let c = TC.get(key); if(c) return c;
   if(TC.size > 900){ let k = 0; for(const old of TC.keys()){ TC.delete(old); if(++k >= 300) break; } }
   const w = tw(str, f) + 4, h = FLH[f] + 4;
-  if(TS.width < w || TS.height < h){ TS.width = Math.max(TS.width, w); TS.height = Math.max(TS.height, h); }
-  TSX.clearRect(0, 0, w, h); TSX.font = FONT[f]; TSX.textBaseline = 'alphabetic'; TSX.fillStyle = '#fff'; TSX.fillText(str, 2, FBASE[f] + 2);
-  const im = TSX.getImageData(0, 0, w, h), d = im.data, [cr, cg, cb] = hex2rgb(color);
+  // drawn at 4× and read back cell by cell. Some browsers place the glyphs half a pixel off; at 1× that smeared each
+  // pixel over two and a plain cut-off turned 「메」 into a solid block. At 4× the font's own pixel grid is easy to find
+  // (every edge falls on the same phase of 4), so each cell is sampled in its middle and comes out exact wherever it landed.
+  const Q = 4, W4 = w * Q, H4 = h * Q;
+  if(TS.width < W4 || TS.height < H4){ TS.width = Math.max(TS.width, W4); TS.height = Math.max(TS.height, H4); }
+  TSX.clearRect(0, 0, W4, H4); TSX.font = FONT4[f]; TSX.textBaseline = 'alphabetic'; TSX.fillStyle = '#fff'; TSX.fillText(str, 2 * Q, (FBASE[f] + 2) * Q);
+  const a4 = TSX.getImageData(0, 0, W4, H4).data, hx = [0, 0, 0, 0], hy = [0, 0, 0, 0];
+  for(let y = 0; y < H4; y++) for(let x = 0; x < W4; x++){ const i = (y * W4 + x) * 4 + 3, v = a4[i] > 127; if(x && v !== (a4[i - 4] > 127)) hx[x % Q]++; if(y && v !== (a4[i - W4 * 4] > 127)) hy[y % Q]++; }
+  const ph = hs => { let b = 0; for(let k = 1; k < Q; k++) if(hs[k] > hs[b]) b = k; return b <= 2 ? b : b - Q; }, sx0 = ph(hx) + 2, sy0 = ph(hy) + 2;
   const on = new Uint8Array(w * h);
-  for(let i = 0; i < w * h; i++) on[i] = d[i * 4 + 3] > 110 ? 1 : 0;
+  for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){ const X = x * Q + sx0, Y = y * Q + sy0; on[y * w + x] = X >= 0 && Y >= 0 && X < W4 && Y < H4 && a4[(Y * W4 + X) * 4 + 3] > 127 ? 1 : 0; }
+  const im = new ImageData(w, h), d = im.data, [cr, cg, cb] = hex2rgb(color);
   let oc = ol ? hex2rgb(ol) : null;
   for(let i = 0; i < w * h; i++){
     const p = i * 4;

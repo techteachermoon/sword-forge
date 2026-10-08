@@ -1857,7 +1857,7 @@ async function rankInit(){
 }
 function cleanRow(id, d){
   if(!d || typeof d !== 'object') return null;
-  const name = String(d.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 8); if(!name) return null;
+  let name = String(d.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 8); if(!name) return null; if(badName(name)) name = '(가린 이름)';
   const best = clamp(Math.floor(+d.best || 0), 0, MAX);
   let stage = clamp(Math.floor(+d.stage || 0), 0, 30); if(d.sv !== 2 && stage) stage = oldStage(stage); stage = Math.min(stage, NST); // old rows counted 5 stages per area
   const diff = DIFF[d.diff] ? d.diff : 'normal';
@@ -2080,7 +2080,7 @@ function peerDraw(o){
   const by = y - 6; R(x - 4, by, 9, 8, COL.ink); R(x - 3, by + 1, 7, 6, '#6a4a32'); R(x - 2, by + 2, 5, 5, c);
   R(x - 4, by - 7, 9, 8, COL.ink); R(x - 3, by - 6, 7, 6, '#f2c9a0'); R(x - 3, by - 6, 7, 2, '#3a2416'); P(x + f * 2, by - 3, COL.ink);
   g.globalAlpha = 1;
-  T(o.dead ? o.nm + ' (쓰러짐)' : o.nm, x, by - 20, { f: 's', a: 'c', c: o.dead ? COL.faint : '#bfe0ff', ol: COL.ink });
+  T((badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8)) + (o.dead ? ' (쓰러짐)' : ''), x, by - 20, { f: 's', a: 'c', c: o.dead ? COL.faint : '#bfe0ff', ol: COL.ink });
   if(!o.dead){ R(x - 8, by - 9, 16, 2, COL.ink); R(x - 8, by - 9, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a'); }
 }
 const fmtT = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
@@ -3475,6 +3475,7 @@ function saveImport(){
 }
 function setRoom(){
   codeBox('반 코드를 적어 주세요. 같은 코드를 적은 친구끼리 랭킹을 겨뤄요. (12글자까지, 비우면 전체 랭킹)', S.room || '', '정하기', v => {
+    if(badName(v)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있어요'); return; }
     S.room = String(v).replace(/\s+/g, '').slice(0, 12); save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? '반 「' + S.room + '」' : '전체 랭킹');
   });
 }
@@ -3863,9 +3864,22 @@ function mkTitleBG(){
 let titleRename = false;
 function openTitle(rename){ titleRename = !!rename; G.scr = 'title'; const inp = document.getElementById('nick'); inp.value = S.name || ''; placeInput(); }
 function nickOk(){ const v = (document.getElementById('nick').value || '').trim(); return v.length >= 1 && v.length <= 8; }
+// ---- name filter: swear words, sexual words and slurs can't become a name (or a class code) ----
+// the check ignores spaces, digits and symbols, so "씨 1 발" or "s.e.x" are caught too
+const BAD_WORDS = [
+  '씨발', '시발', '씨바', '시바', '씹', '쌍년', '쌍놈', 'ㅅㅂ', 'ㅆㅂ', 'ㅆㅃ', '병신', '븅신', '빙신', 'ㅂㅅ', '좆', '존나', '졸라', '조낸', 'ㅈㄴ', '지랄', 'ㅈㄹ',
+  '개새', '개색', '개세', '새끼', '섀끼', '쌔끼', '새키', 'ㅅㄲ', '미친', '미췬', '미칀', 'ㅁㅊ', '엠창', '니미', '느금', '니애미', '느개비', '애미', '애비', '꺼져', '닥쳐',
+  '등신', '찐따', '호구', '걸레', '창녀', '창년', '화냥', '갈보', '보지', '자지', '보짓', '잦이', '섹스', '섹시', '야동', '야사', '강간', '성폭', '성추행', '딸딸', '자위',
+  '젖꼭', '꼬추', '빠구리', '떡치', '따먹', '유두', '발기', '콘돔', '변태', '몸캠', '노출', '야한', '음란', '일베', '운지', '한남', '김치녀', '메갈', '틀딱', '급식충', '맘충',
+  '짱깨', '쪽바리', '장애새', '느그', '죽어', '자살', 'fuck', 'fuk', 'shit', 'bitch', 'sex', 'porn', 'dick', 'pussy', 'cock', 'cunt', 'asshole', 'nigg', 'fag',
+  'slut', 'whore', 'penis', 'vagina', 'boob', 'tits', 'nude', 'xxx',
+];
+const nameNorm = v => String(v || '').toLowerCase().normalize('NFC').replace(/[^0-9a-z가-힣ㄱ-ㅎㅏ-ㅣ]/g, '').replace(/[0-9]/g, '');
+const badName = v => { const n = nameNorm(v); return !!n && BAD_WORDS.some(w => n.includes(w)); };
+const NAME_WARN = '욕설·성적인 말·남을 놀리거나 비방하는 이름은 쓸 수 없어요. 특정인을 비방하면 모욕죄·명예훼손으로 법적 처벌을 받을 수 있어요.';
 function enterGame(){
   const inp = document.getElementById('nick');
-  if(!S.name || titleRename){ if(!nickOk()){ SFX.deny(); toast('이름을 1~8글자로 적어 주세요'); return; } const nv = inp.value.trim().slice(0, 8); const changed = nv !== S.name; S.name = nv; if(changed) ensureDaily(); }
+  if(!S.name || titleRename){ if(!nickOk()){ SFX.deny(); toast('이름을 1~8글자로 적어 주세요'); return; } if(badName(inp.value)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있어요'); return; } const nv = inp.value.trim().slice(0, 8); const changed = nv !== S.name; S.name = nv; if(changed) ensureDaily(); }
   inp.blur();
   G.scr = 'game'; titleRename = false; placeInput();
   audioInit(); playSong('forge', true);
@@ -3914,8 +3928,9 @@ function drawTitle(dt){
     T('최고 기록 +' + S.best + (S.title ? '  ·  ' + S.title : ''), 135, 374, { f: 's', a: 'c', c: COL.dim });
     button('tstart', 56, 392, 158, 30, '이어하기', null, enterGame, { kind: 'primary' });
   }
-  T('만든이 바이브코딩부 교사 × Claude', 135, 446, { f: 's', a: 'c', c: '#5e5468' });
-  T('원작 플래시 「검 강화하기」 · 글꼴 갈무리', 135, 459, { f: 's', a: 'c', c: '#5e5468' });
+  if(!S.name || titleRename) wrap(NAME_WARN, 's', 250).slice(0, 4).forEach((ln, i) => T(ln, 135, 436 + i * 11, { f: 's', a: 'c', c: '#ff9a8a', ol: COL.ink }));
+  else { T('만든이 바이브코딩부 교사 × Claude', 135, 446, { f: 's', a: 'c', c: '#5e5468' });
+  T('원작 플래시 「검 강화하기」 · 글꼴 갈무리', 135, 459, { f: 's', a: 'c', c: '#5e5468' }); }
 }
 
 // ===================== main loop, keyboard, boot =====================

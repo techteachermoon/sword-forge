@@ -2125,7 +2125,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 14; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 15; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2259,7 +2259,7 @@ function mpTarget(m){
 function mpSwingOut(){ const sw = B.swing; if(!B.mp || !sw) return; const f2 = v => Math.round(v * 100) / 100; MP.ev = MP.ev || []; MP.ev.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), Math.round(sw.R), f2(sw.dur), sw.spins || 1]); }
 function mpFxOut(){
   const out = [], r = Math.round, f2 = v => Math.round(v * 100) / 100;
-  for(const b of B.blasts) if(!b._n && !b.rm){ b._n = 1; out.push(['b', r(b.x), r(b.y), r(b.r), (b.magic ? 1 : 0) | (b.quake ? 2 : 0)]); }
+  for(const b of B.blasts) if(!b._n && !b.rm){ b._n = 1; out.push(['b', r(b.x), r(b.y), r(b.r), (b.magic ? 1 : 0) | (b.quake ? 2 : 0) | (b.fire ? 4 : 0)]); }
   for(const b of B.bolts) if(!b._n && !b.rm){ b._n = 1; out.push(['l', r(b.x1), r(b.y1), r(b.x2), r(b.y2)]); }
   for(const q of B.pillars) if(!q._n && !q.rm){ q._n = 1; out.push(['p', r(q.x), r(q.y)]); }
   for(const c of B.casts || []) if(!c._n && !c.rm){ c._n = 1; out.push(['c', r(c.x0), r(c.y0), r(c.x), r(c.y), f2(c.dur)]); }
@@ -2274,7 +2274,7 @@ function mpFxOut(){
 function mpFxIn(o, fx){
   if(!B || !Array.isArray(fx) || o.n !== B.n) return; const col = (WL[o.ln] || WL.c).col;
   for(const e of fx){ const k = e[0];
-    if(k === 'b') B.blasts.push({ x: e[1], y: e[2], r: e[3], t: 0, magic: !!(e[4] & 1), quake: !!(e[4] & 2), col, rm: 1 });
+    if(k === 'b') B.blasts.push({ x: e[1], y: e[2], r: e[3], t: 0, magic: !!(e[4] & 1), quake: !!(e[4] & 2), fire: !!(e[4] & 4), col, rm: 1 });
     else if(k === 'l') B.bolts.push({ x1: e[1], y1: e[2], x2: e[3], y2: e[4], t: 0, rm: 1 });
     else if(k === 'p') B.pillars.push({ x: e[1], y: e[2], t: 0, rm: 1 });
     else if(k === 'c'){ B.casts = B.casts || []; B.casts.push({ x0: e[1], y0: e[2], x: e[3], y: e[4], t: 0, dur: e[5] || .2, col, rm: 1 }); }
@@ -2378,6 +2378,32 @@ function drawDmgMeter(x, y){
 }
 const mpHostId = () => MP.host ? MP.me : (Object.values(MP.peers).find(o => o.isHost && G.t - o.seen < 2) || {}).id;
 // a smith's sword: resting in hand, or the swing with its trail (mine and friends' look the same)
+// 화염술사 effects
+const FIRE_C = ['#fff6d0', '#fff2a0', '#ffd23a', '#ff9a3a', '#ff5a1a', '#c8240e'];
+function fireBlastDraw(b){
+  const k = b.t / .35, r = b.r;
+  // the fireball: hot white core, then yellow, orange, red rings growing outward
+  if(k < .55){ const kk = k / .55; for(let ring = 0; ring < 4; ring++){ const rr = r * (.25 + kk * .75) * (1 - ring * .22); g.globalAlpha = (1 - kk) * (.5 + ring * .15); for(let yy = -rr; yy <= rr; yy += 1){ const ww = Math.round(Math.sqrt(Math.max(0, rr * rr - yy * yy))); R(b.x - ww, b.y + yy * .7, ww * 2, 1, FIRE_C[5 - ring - (kk < .3 ? 1 : 0)]); } } }
+  // a column of flame leaping up and falling back
+  const n = 9, hmax = r * 1.6 * Math.sin(Math.min(1, k * 1.4) * Math.PI);
+  for(let i = -n; i <= n; i++){ const h = Math.max(0, hmax * (1 - Math.abs(i) / (n + 1)) * (.7 + .3 * Math.sin(G.t * 31 + i * 1.7))), x = Math.round(b.x + i * r / n * .6);
+    g.globalAlpha = Math.max(0, 1 - k * .9); for(let q = 0; q < 4; q++){ const hh = h * (1 - q * .25); if(hh < 1) continue; R(x - 1, Math.round(b.y - hh), 3 - (q > 1 ? 1 : 0), Math.round(hh * .35 + 1), FIRE_C[4 - q]); } }
+  g.globalAlpha = (1 - k) * .8; for(let a = 0; a < 40; a++){ const an = a / 40 * 6.28; P(b.x + Math.cos(an) * r * (.6 + k * .6), b.y + Math.sin(an) * r * (.6 + k * .6) * .7, a % 2 ? '#ff9a3a' : '#ff5a1a'); }
+  g.globalAlpha = 1;
+}
+function fireFieldDraw(f){ // scorched ground with scattered tongues of flame that rise and fall at their own pace
+  const life = Math.min(1, f.t), rx = f.r, ry = f.r * .6, st = GQ() === 2 ? 8 : 12;
+  g.globalAlpha = .2 * life; for(let yy = -ry; yy <= ry; yy += 2){ const ww = Math.round(rx * Math.sqrt(Math.max(0, 1 - (yy / ry) ** 2))); R(f.x - ww, f.y + yy, ww * 2, 2, yy % 4 ? '#5a1206' : '#7a1a08'); }
+  for(let gy = -ry + 4; gy <= ry; gy += st * .7) for(let gx = -rx + 3; gx <= rx; gx += st){
+    const seed = Math.abs(Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453) % 1, e = (gx / rx) ** 2 + (gy / ry) ** 2; if(e > .9 || seed < .3) continue;
+    const ph = G.t * (6 + seed * 6) + seed * 20, k = Math.abs(Math.sin(ph)), h = Math.round((3 + 9 * (1 - e) * seed + 2) * (.35 + .65 * k) * life);
+    const x = Math.round(f.x + gx + (seed - .5) * st * .8 + Math.sin(ph * .6) * 1.2), y = Math.round(f.y + gy);
+    if(h < 2) continue;
+    g.globalAlpha = (.45 + .4 * k) * life; R(x - 1, y - h, 3, h, '#d8340e'); R(x, y - h + 1, 1, h - 1, '#ff9a3a'); if(h > 5) R(x, y - h + 1, 1, Math.round(h * .4), '#ffd23a'); P(x, y - h, '#fff2a0');
+  }
+  g.globalAlpha = 1;
+  if(Math.random() < .5) G.parts.push({ x: f.x + (Math.random() - .5) * rx * 1.6, y: f.y + (Math.random() - .5) * ry * 1.4, vx: (Math.random() - .5) * 10, vy: -30 - Math.random() * 30, life: .6, max: .6, c: Math.random() < .5 ? '#ffd23a' : '#ff9a3a', grav: -10 });
+}
 function heroSword(x, y, sw, wid, col, R0){
   if(!WEP[wid]) return; const spr = swordFrame(wid, G.t), sc = Math.min(.6, (sw ? sw.R : R0 || 40) / spr.W);
   if(sw){
@@ -2783,7 +2809,9 @@ function svUpdateCasts(dt){
 }
 function svBlast(x, y, k = 1){
   const r = svR();
-  B.blasts.push({ x, y, r, t: 0, magic: true }); G.shake = Math.max(G.shake, 2.5); SFX.crit();
+  const fire = B.line === 'm1';
+  B.blasts.push({ x, y, r, t: 0, magic: true, fire }); G.shake = Math.max(G.shake, fire ? 3.5 : 2.5); SFX.crit();
+  if(fire) for(let i = 0; i < 26; i++){ const a = Math.random() * 6.28, v = 20 + Math.random() * 70; G.parts.push({ x: x + Math.cos(a) * r * .4, y: y + Math.sin(a) * r * .25, vx: Math.cos(a) * v * .6, vy: -40 - Math.random() * 90, life: .5 + Math.random() * .5, max: 1, c: ['#fff2a0', '#ffd23a', '#ff9a3a', '#ff5a1a'][i % 4], grav: -30, sz: i % 3 ? 1 : 2 }); } /* embers */
   for(let i = 0; i < 22; i++){ const a = Math.random() * 6.28, v = 60 + Math.random() * 90; G.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v * .7 - 20, life: .45, max: .45, c: [B.wcol, '#ffffff', mixc(B.wcol, '#ffffff', .5)][i % 3], grav: 90, sz: i % 4 ? 1 : 2 }); }
   B.decals = B.decals || []; B.decals.push({ x, y: y + 2, c: mixc(B.wcol, '#000000', .7), t: 5, r: Math.round(r * .55) });
   const hits = B.mons.filter(m => m.die === 0 && Math.hypot(m.x - x, m.y - y) < r + m.r);
@@ -3062,7 +3090,7 @@ function survDraw(dt){
   for(const dc of GQ() ? B.decals || [] : []){ g.globalAlpha = Math.min(1, dc.t / 3) * .55; R(Math.round(dc.x - dc.r), Math.round(dc.y - 1), Math.round(dc.r * 2), 2, dc.c); R(Math.round(dc.x - dc.r * .6), Math.round(dc.y - 2), Math.round(dc.r * 1.2), 4, dc.c); P(dc.x + dc.r + 1, dc.y - 2, dc.c); P(dc.x - dc.r - 2, dc.y + 1, dc.c); }
   g.globalAlpha = 1;
   for(const f of B.fires){ g.globalAlpha = f.t * 2; R(f.x - 2, f.y - 1, 4, 3, '#ff7a2a'); P(f.x, f.y - 2, '#fff2a0'); g.globalAlpha = 1; }
-  for(const f of B.fields){ g.globalAlpha = Math.min(1, f.t) * .3; for(let yy = -f.r * .6; yy <= f.r * .6; yy += 2){ const ww = Math.round(f.r * Math.sqrt(Math.max(0, 1 - Math.pow(yy / (f.r * .6), 2)))); R(f.x - ww, f.y + yy, ww * 2, 1, (yy / 2) % 2 ? '#ff5a1a' : '#ff9a3a'); } g.globalAlpha = 1; if(Math.random() < .5) G.parts.push({ x: f.x + (Math.random() - .5) * f.r * 1.6, y: f.y + (Math.random() - .5) * f.r, vx: 0, vy: -24, life: .4, max: .4, c: Math.random() < .5 ? '#ff9a3a' : '#fff2a0', grav: 0 }); }
+  for(const f of B.fields){ if(GQ()){ fireFieldDraw(f); continue; } g.globalAlpha = Math.min(1, f.t) * .3; for(let yy = -f.r * .6; yy <= f.r * .6; yy += 2){ const ww = Math.round(f.r * Math.sqrt(Math.max(0, 1 - Math.pow(yy / (f.r * .6), 2)))); R(f.x - ww, f.y + yy, ww * 2, 1, (yy / 2) % 2 ? '#ff5a1a' : '#ff9a3a'); } g.globalAlpha = 1; if(Math.random() < .5) G.parts.push({ x: f.x + (Math.random() - .5) * f.r * 1.6, y: f.y + (Math.random() - .5) * f.r, vx: 0, vy: -24, life: .4, max: .4, c: Math.random() < .5 ? '#ff9a3a' : '#fff2a0', grav: 0 }); }
   // aura ring
   if(sk('aura')){ g.globalAlpha = .25 + .1 * Math.sin(G.t * 4); for(let a = 0; a < 48; a++){ const an = a / 48 * 6.28 + G.t; P(PL.x + Math.cos(an) * 52, PL.y + Math.sin(an) * 52 * .8, '#fff3b0'); } g.globalAlpha = 1; }
   const order = B.mons.slice().sort((a, b) => a.y - b.y);
@@ -3086,6 +3114,7 @@ function survDraw(dt){
     g.drawImage(m.hitT > 0 ? MON[m.key + '_w'] : img, dx, dy, ww2, hh);
     if(m.slowT > 0 && GQ()) drawTinted(MON[m.key + '_w'], dx, dy, '#9be7ff', .35, m.sc);
     if(flip) g.restore();
+    if(m.burnT > 0 && m.die === 0){ const fl = (i, hgt) => { const fx = Math.round(m.x + i * w * .22), fh = Math.round(hgt * (.6 + .4 * Math.abs(Math.sin(G.t * 14 + m.id * 3 + i * 2)))); R(fx - 1, dy - fh + 2, 3, fh, '#ff5a1a'); R(fx, dy - fh + 1, 1, Math.max(1, fh - 2), '#ffd23a'); P(fx, dy - fh + 1, '#fff2a0'); }; fl(-1, 5); fl(0, 8); fl(1, 5); } /* on fire */
     if(m.burnT > 0 && Math.random() < .4) G.parts.push({ x: m.x + (Math.random() - .5) * w * .6, y: dy + 2, vx: 0, vy: -20, life: .3, max: .3, c: Math.random() < .5 ? '#ff9a3a' : '#fff2a0', grav: 0 });
     if(m.poisonT > 0 && Math.random() < .25) G.parts.push({ x: m.x + (Math.random() - .5) * w * .6, y: dy + 4, vx: 0, vy: -10, life: .4, max: .4, c: '#7dff6a', grav: 0 });
     if(m.stun > 0) for(let k = 0; k < 2; k++){ const a = G.t * 6 + k * 3.1; P(m.x + Math.cos(a) * 6, dy - 3 + Math.sin(a) * 2, '#ffe070'); }
@@ -3118,7 +3147,7 @@ function survDraw(dt){
   for(const o of B.orbs || []) orbDraw(o[0], o[1], o[2], B.danceT > 0 ? '#ff8ad8' : B.wcol);
   const lowQ = !GQ();
   for(const s of B.shots){ if(lowQ){ R(s.x - 1, s.y - 1, 3, 3, B.wcol); P(s.x, s.y, '#ffffff'); continue; } if(s.dag){ for(let i = 0; i < 6; i++) P(s.x - Math.cos(s.a) * i, s.y - Math.sin(s.a) * i, i < 2 ? '#ffffff' : B.wcol); continue; } const c = B.wcol, len = 5; for(let i = -len; i <= len; i++){ const an = s.a + Math.PI / 2; P(s.x + Math.cos(an) * i + Math.cos(s.a) * (Math.abs(i) * -.4), s.y + Math.sin(an) * i + Math.sin(s.a) * (Math.abs(i) * -.4), Math.abs(i) < 2 ? '#ffffff' : c); if(s.big) P(s.x + Math.cos(an) * i, s.y + Math.sin(an) * i + 1, c); } }
-  for(const b of B.blasts){ const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? (b.col || B.wcol) : '#ff9a3a';
+  for(const b of B.blasts){ if(b.fire){ fireBlastDraw(b); continue; } const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? (b.col || B.wcol) : '#ff9a3a';
     if(k < .3 && GQ()){ const cr = b.r * (.25 + k * 1.2); g.globalAlpha = (.3 - k) * 2.6; for(let yy = -cr; yy <= cr; yy += 1){ const ww = Math.round(Math.sqrt(Math.max(0, cr * cr - yy * yy))); R(b.x - ww, b.y + yy * (b.quake ? .6 : 1), ww * 2, 1, k < .12 ? '#ffffff' : '#fff2c0'); } }
     g.globalAlpha = (1 - k) * .6; if(GQ()) for(let a = 0; a < 40; a++){ const an = a / 40 * 6.28 + k; P(b.x + Math.cos(an) * r * 1.18, b.y + Math.sin(an) * r * 1.18 * (b.quake ? .6 : 1), bc); }
     g.globalAlpha = 1 - k; for(let a = 0; a < 56; a++){ const an = a / 56 * 6.28; P(b.x + Math.cos(an) * r, b.y + Math.sin(an) * r * (b.quake ? .6 : 1), b.quake ? '#c8a070' : b.magic ? B.wcol : '#ff9a3a'); } if(b.magic && k < .4){ g.globalAlpha = (.4 - k) * 1.5; for(let yy = -r; yy <= r; yy += 2){ const ww = Math.round(Math.sqrt(r * r - yy * yy)); R(b.x - ww, b.y + yy, ww * 2, 1, B.wcol); } } g.globalAlpha = 1; }

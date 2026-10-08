@@ -1791,6 +1791,12 @@ function battleUpdate(dt){ if(B) survUpdate(dt); mpTick(dt); }
 // Supabase project (fill in after creating it). The anon key is meant to be public; row-level security keeps each row writable only by its owner.
 const SB = { url: 'https://mqqtququpcgntbzmsjjo.supabase.co', key: 'sb_publishable_z6Hf1w9h3QaX5V8o6juKeA_UKQxSb78' };
 const SB_AUTH = 'sword-forge-sb';
+// two web addresses share one Supabase: the school site, and a public one for everyone else.
+// Boards and together-rooms are kept apart by a one-letter prefix on the public site, so outsiders never land on a class board.
+const SCHOOL_HOSTS = ['swordforge.pages.dev'];
+const isSchoolSite = () => { const h = location.hostname; return SCHOOL_HOSTS.some(s => h === s || h.endsWith('.' + s)); };
+const RW = () => isSchoolSite() ? '반' : '그룹';
+const roomKey = () => isSchoolSite() ? (S.room || '').slice(0, 12) : '~' + (S.room || '').slice(0, 11);
 async function sbFetch(path, o = {}){
   const r = await fetch(SB.url + path, Object.assign({}, o, { headers: Object.assign({ apikey: SB.key, 'Content-Type': 'application/json' }, o.headers || {}) }));
   const t = await r.text(); let j = null; try{ j = t ? JSON.parse(t) : null; }catch(e){}
@@ -1808,7 +1814,7 @@ async function sbSession(){
 const sbAuthH = async () => ({ Authorization: 'Bearer ' + (await sbSession()).at });
 // the same small shape the claude.ai db offers: collection().orderBy().limit().onSnapshot() and doc().set()
 function sbDb(){
-  const room = () => encodeURIComponent((S.room || '').slice(0, 12));
+  const room = () => encodeURIComponent(roomKey());
   const query = (field, dir, n) => ({
     orderBy: (f, d) => query(f, d, n), limit: k => query(field, dir, k),
     onSnapshot(next, err){
@@ -1825,7 +1831,7 @@ function sbDb(){
   });
   return {
     collection: () => query('best', 'desc', 60),
-    doc: () => ({ set: async d => sbFetch('/rest/v1/scores?on_conflict=id', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify([Object.assign({ id: (await sbSession()).uid, room: (S.room || '').slice(0, 12) }, d)]) }) }),
+    doc: () => ({ set: async d => sbFetch('/rest/v1/scores?on_conflict=id', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify([Object.assign({ id: (await sbSession()).uid, room: roomKey() }, d)]) }) }),
   };
 }
 const rankRefresh = () => (RK.pulls || []).forEach(f => f()); // after the class code changes
@@ -2036,20 +2042,20 @@ function mpLoadLib(){
   });
 }
 async function mpJoin(tk){
-  if(!S.room){ toast('먼저 반 코드를 정해라'); setRoom(); return; }
+  if(!S.room){ toast('먼저 ' + RW() + ' 코드를 정해라'); setRoom(); return; }
   if(MP.joining) return; MP.joining = true; toast('친구들을 찾는 중...');
   try{
     await mpLoadLib();
     if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false } });
     mpLeave();
     MP.me = Math.random().toString(36).slice(2, 10);
-    const ch = MP.cli.channel('sf-together-' + S.room, { config: { broadcast: { self: false } } });
+    const ch = MP.cli.channel('sf-together-' + roomKey(), { config: { broadcast: { self: false } } });
     ch.on('broadcast', { event: 'p' }, m => mpRecv(m.payload));
     ch.on('broadcast', { event: 'f' }, m => mpFloor(m.payload));
     await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('timeout')), 9000); ch.subscribe(st => { if(st === 'SUBSCRIBED'){ clearTimeout(t); res(); } else if(st === 'CHANNEL_ERROR' || st === 'TIMED_OUT'){ clearTimeout(t); rej(new Error(st)); } }); });
     MP.ch = ch; MP.peers = {}; G.modal = null;
     startEndless(tk); B.mp = true; MP.on = true;
-    B.banner = { t: 0, text: '같이 하기', sub: '반 ' + S.room + ' · 골드 없이 함께 오른다' };
+    B.banner = { t: 0, text: '같이 하기', sub: RW() + ' ' + S.room + ' · 골드 없이 함께 오른다' };
   }catch(e){ SFX.deny(); toast('같이 하기에 연결하지 못했다'); }
   MP.joining = false;
 }
@@ -3474,9 +3480,9 @@ function saveImport(){
   });
 }
 function setRoom(){
-  codeBox('반 코드를 적어 주세요. 같은 코드를 적은 친구끼리 랭킹을 겨뤄요. (12글자까지, 비우면 전체 랭킹)', S.room || '', '정하기', v => {
+  codeBox(RW() + ' 코드를 적어 주세요. 같은 코드를 적은 친구끼리 랭킹을 겨루고 같이 하기 방에 모여요. (' + (isSchoolSite() ? 12 : 11) + '글자까지, 비우면 전체 랭킹)', S.room || '', '정하기', v => {
     if(badName(v)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있어요'); return; }
-    S.room = String(v).replace(/\s+/g, '').slice(0, 12); save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? '반 「' + S.room + '」' : '전체 랭킹');
+    S.room = String(v).replace(/\s+/g, '').slice(0, 12); save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? RW() + ' 「' + S.room + '」' : '전체 랭킹');
   });
 }
 function drawRank(){
@@ -3492,7 +3498,7 @@ function drawRank(){
       : ['랭킹 저장소가 아직 연결되지 않았다.', ...wrap('게임은 그대로 할 수 있다. 기록은 이 기기에 저장된다.', 's', 230)];
     msgBox(lines);
   } else {
-    if(RK.web) button('rkroom', VW - 76, 29, 72, 16, S.room ? '반 ' + S.room : '반 코드 넣기', null, setRoom, { small: true, kind: S.room ? 'normal' : 'gold' });
+    if(RK.web) button('rkroom', VW - 76, 29, 72, 16, S.room ? RW() + ' ' + S.room : RW() + ' 코드 넣기', null, setRoom, { small: true, kind: S.room ? 'normal' : 'gold' });
     else T(RK.status === 'loading' ? '불러오는 중...' : (RK.writable === false ? '보기 전용' : etab ? '점수 순' : '최고 강화 순'), VW - 8, 33, { f: 's', a: 'r', c: RK.writable === false ? COL.bad : COL.dim });
     const st = G.scroll.rank, top = 50, h = 330, rowH = 36;
     const rows = etab ? (RK.erows || RK.rows).filter(r => r.es > 0).sort((a, b) => b.es - a.es || a.et - b.et) : RK.rows;
@@ -3689,7 +3695,7 @@ function drawModal(){
     wrap('층마다 몬스터가 늘고 단단해진다. 카드는 5층마다 나오는 보스를 잡아야 얻는다. 점수와 시간은 랭킹에 남는다.', 's', 240).forEach((ln, j) => T(ln, 14, 366 + j * 11, { f: 's', c: COL.faint }));
     if(mpAvail()){
       button('enGo', 12, 404, 160, 32, '혼자 도전', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
-      button('enMp', 176, 404, 82, 32, '같이 하기', S.room ? '반 ' + S.room : '반 코드 필요', () => mpJoin(m.sel), { kind: 'blue' });
+      button('enMp', 176, 404, 82, 32, '같이 하기', S.room ? RW() + ' ' + S.room : RW() + ' 코드 필요', () => mpJoin(m.sel), { kind: 'blue' });
     } else button('enGo', 12, 404, 246, 32, '도전 시작', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
     button('enNo', 12, 440, 246, 26, '돌아가기', null, () => { G.modal = null; }, { small: true });
   } else if(m.k === 'vault'){

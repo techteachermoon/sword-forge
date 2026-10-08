@@ -41,11 +41,11 @@ function fit(){
   SCALE = s;
   lc.width = FW; lc.height = FH; g.imageSmoothingEnabled = false;
   const dpr = window.devicePixelRatio || 1;
-  KX = Math.max(1, Math.min([2, 3, 4][GQ()], Math.ceil(s * dpr))); /* lower graphics: a smaller backing canvas */
+  KX = Math.max(1, Math.min([2, 3, 6][GQ()], Math.ceil(s * dpr))); /* high: big enough that the browser only ever shrinks it (even pixels); lower graphics: smaller */
   cv.width = FW * KX; cv.height = FH * KX;
   // the browser stretches the canvas the rest of the way. Nearest-neighbour only when that stretch is (nearly) whole pixels;
   // at an odd stretch like ×2.2 it made 1-pixel strokes alternate 2 and 3 pixels wide and Hangul looked broken
-  { const f = s * dpr / KX, fr = f - Math.floor(f); cv.style.imageRendering = f >= 1 && (fr < .12 || fr > .9) ? 'pixelated' : 'auto'; }
+  { const f = s * dpr / KX, fr = f - Math.floor(f); cv.style.imageRendering = f >= 1 && (fr < .02 || fr > .98) ? 'pixelated' : 'auto'; } /* an uneven stretch (×1.09) doubled every 11th row and big letters looked broken */
   cv.style.width = aw + 'px';
   cv.style.height = ah + 'px';
   sx.imageSmoothingEnabled = false;
@@ -176,18 +176,26 @@ function textImg(str, f, color, ol){
   for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){ const X = x * Q + sx0, Y = y * Q + sy0; on[y * w + x] = X >= 0 && Y >= 0 && X < W4 && Y < H4 && a4[(Y * W4 + X) * 4 + 3] > 127 ? 1 : 0; }
   const im = new ImageData(w, h), d = im.data, [cr, cg, cb] = hex2rgb(color);
   let oc = ol ? hex2rgb(ol) : null;
+  // the outline goes round the outside only: the small holes inside a letter (ㅇ, ㅁ, ㅂ…) stay open, or a dense syllable like 「흡」 filled up into a blob
+  let out = null;
+  if(oc){ out = new Uint8Array(w * h); const st = []; for(let x = 0; x < w; x++){ st.push(x, (h - 1) * w + x); } for(let y = 0; y < h; y++){ st.push(y * w, y * w + w - 1); }
+    while(st.length){ const i = st.pop(); if(out[i] || on[i]) continue; out[i] = 1; const xx = i % w, yy = (i / w) | 0; if(xx > 0) st.push(i - 1); if(xx < w - 1) st.push(i + 1); if(yy > 0) st.push(i - w); if(yy < h - 1) st.push(i + w); } }
   for(let i = 0; i < w * h; i++){
     const p = i * 4;
     if(on[i]){ d[p] = cr; d[p + 1] = cg; d[p + 2] = cb; d[p + 3] = 255; }
-    else if(oc){
+    else if(oc && out[i]){
       const xx = i % w, yy = (i / w) | 0;
       const n = (xx > 0 && on[i - 1]) || (xx < w - 1 && on[i + 1]) || (yy > 0 && on[i - w]) || (yy < h - 1 && on[i + w]);
       if(n){ d[p] = oc[0]; d[p + 1] = oc[1]; d[p + 2] = oc[2]; d[p + 3] = 255; } else d[p + 3] = 0;
     } else d[p + 3] = 0;
   }
   c = mkCanvas(w, h); c.getContext('2d').putImageData(im, 0, 0);
-  TC.set(key, c); return c;
+  if(fontsReady()) TC.set(key, c); /* drawn with a stand-in font: don't keep it */
+  return c;
 }
+let FONTS_OK = false;
+const fontsReady = () => FONTS_OK || (FONTS_OK = !!(document.fonts && document.fonts.check('12px G11') && document.fonts.check('12px G11B') && document.fonts.check('10px G9')));
+try{ document.fonts.addEventListener('loadingdone', () => { FONTS_OK = false; TC.clear(); }); }catch(e){}
 // T(text, x, y, opts) : y = top of line box
 function T(str, x, y, o = {}){
   str = String(str);
@@ -1068,7 +1076,7 @@ const WN = {
   t: [['쌍둥이 단도', '둘이 꼭 붙어 다닌다. 사이가 좋다.', ''], ['제비 날개', '제비처럼 빠르게 오간다.', ''], ['바람가르기', '휘두르면 바람이 둘로 갈라진다.', ''], ['서리 쌍아', '둘 다 차갑다. 손이 시리다.', 'frost'], ['번개 단도', '하나가 번쩍이면 다른 하나가 우르릉.', 'spark'],
       ['달과 그림자', '하나는 빛나고 하나는 숨는다.', 'moon'], ['독사 한 쌍', '양쪽 다 물면 아프다.', 'drip'], ['여우 발톱', '교활하게 빠르다.', ''], ['쌍룡', '칼자루에 용 두 마리가 얽혀 있다.', 'flame'], ['파멸의 쌍날검', '양날 모두 세계를 끝낼 수 있다.', 'serrate', 19]],
   t1: [['그림자 송곳니', '빛을 먹는 칼날.', 'void'], ['침묵의 맹세', '휘둘러도 소리가 나지 않는다.', ''], ['밤의 속삭임', '귓가에서 무언가 속삭인다.', 'void'], ['심연의 칼날', '바라보면 빨려 들어갈 것 같은 보랏빛.', 'void', 15], ['까마귀 날개', '검은 깃털이 떨어진다.', 'fade'],
-       ['독거미의 입맞춤', '스치기만 해도 끝이다.', 'drip'], ['사라지는 칼', '쥐고 있는데도 안 보인다.', 'fade'], ['시간을 베는 검', '휘두르면 1초 전으로 돌아간다. 아마도.', 'clock', 22], ['허공의 처형인', '목표는 쓰러진 줄도 모른다.', 'void'], ['그림자 군주', '모든 그림자가 이 검에게 고개를 숙인다.', 'fade'], ['숨은 막대기', '어디 갔지? 손에 쥐고 있다.'], ['그림자 잔가지', '빛을 받아도 그림자만 보인다.'], ['어둠의 덩굴', '쥔 손을 감고 놓아주지 않는다.'], ['밤의 고목', '해가 지면 조금 더 길어진다.'], ['허공의 뿌리', '어디에도 박혀 있지 않은데 단단하다.'], ['무(無)의 막대기', '있는데 없다. 없는데 아프다.']],
+       ['독거미의 입맞춤', '스치기만 해도 끝이다.', 'drip'], ['사라지는 칼', '쥐고 있는데도 안 보인다.', 'fade'], ['시간을 베는 검', '휘두르면 1초 전으로 돌아간다. 아마도.', 'clock', 22], ['허공의 처형인', '목표는 쓰러진 줄도 모른다.', 'void'], ['그림자 군주', '모든 그림자가 이 검에게 고개를 숙인다.', 'fade'], ['숨은 막대기', '어디 갔지? 손에 쥐고 있다.'], ['그림자 잔가지', '빛을 받아도 그림자만 보인다.'], ['어둠의 덩굴', '쥔 손을 감고 놓아주지 않는다.'], ['밤의 고목', '해가 지면 조금 더 길어진다.'], ['허공의 뿌리', '어디에도 박혀 있지 않은데 단단하다.'], ['무의 막대기', '있는데 없다. 없는데 아프다.']],
   t2: [['꽃잎 칼날', '휘두르면 꽃잎이 흩날린다.', 'halo'], ['나비의 춤', '칼끝이 나비처럼 팔랑인다.', 'stars'], ['무지개 리본', '칼자루에 리본이 달려 있다.', 'rainbow'], ['은하수 칼날', '칼날 속에 별 4천억 개가 흐른다.', 'stars', 23], ['달빛 왈츠', '박자에 맞춰 휘두르면 더 잘 든다.', 'moon'],
        ['춤추는 불꽃', '멈추면 꺼진다. 계속 춰야 한다.', 'flame'], ['차원 절단기', '공간째로 잘라낸다. 택배 상자 뜯기에도 좋다.', 'glitch', 24], ['별빛 무도회', '휘두를 때마다 별이 쏟아진다.', 'stars'], ['무한의 검', '끝이 보이지 않는다. 길이 측정 불가.', 'fade', 27], ['우주의 끝', '이보다 강한 검은 존재할 수 없다. 아마도.', 'prism', 29], ['춤추는 막대기', '혼자서도 리듬을 탄다.'], ['춤추는 새싹', '박자에 맞춰 잎이 흔들린다.'], ['별빛 덩굴', '밤이 되면 덩굴 끝에 별이 맺힌다.'], ['은하 가지', '가지 사이로 은하수가 흐른다.'], ['우주의 고목', '나이테가 행성 궤도처럼 돈다.'], ['무한의 막대기', '어디까지 이어지는지 아무도 모른다.']],
   m: [['견습 마법사의 검', '지팡이와 검 사이 어딘가.', ''], ['달빛 세이버', '밤에만 진짜 힘을 낸다고 전해진다.', 'moon', 11], ['룬 새김 검', '칼날에 읽을 수 없는 글자가 빛난다.', 'runes'], ['피에 젖은 마검', '주인을 고르는 검. 가끔 속삭인다.', 'drip', 13], ['마력의 가시', '쥐면 손끝이 찌릿하다.', 'spark'],

@@ -2111,6 +2111,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
+const MP_VER = 7; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .15, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2147,13 +2148,13 @@ async function mpJoin(tk, party, size){
   }catch(e){ mpLeave(); SFX.deny(); toast('같이 하기에 연결하지 못했다'); }
   MP.joining = false;
 }
-function mpLobbyHi(p){ const L = MP.lobby; if(!L || !p || !p.id || p.id === MP.me) return; L.mem[p.id] = { nm: badName(p.nm) ? '친구' : String(p.nm || '친구').slice(0, 8), t0: p.t0 || 0, seen: G.t }; }
-const mpLobbyList = () => { const L = MP.lobby; return [{ id: MP.me, nm: S.name, t0: MP.t0 }].concat(Object.entries(L.mem).filter(([, o]) => G.t - o.seen < 2.5).map(([id, o]) => ({ id, nm: o.nm, t0: o.t0 }))).sort((a, b) => a.t0 - b.t0 || (a.id < b.id ? -1 : 1)); };
+function mpLobbyHi(p){ const L = MP.lobby; if(!L || !p || !p.id || p.id === MP.me) return; L.mem[p.id] = { nm: badName(p.nm) ? '친구' : String(p.nm || '친구').slice(0, 8), t0: p.t0 || 0, v: p.v || 0, seen: G.t }; }
+const mpLobbyList = () => { const L = MP.lobby; return [{ id: MP.me, nm: S.name, t0: MP.t0 }].concat(Object.entries(L.mem).filter(([, o]) => G.t - o.seen < 2.5).map(([id, o]) => ({ id, nm: o.nm, t0: o.t0, old: o.v !== MP_VER }))).sort((a, b) => a.t0 - b.t0 || (a.id < b.id ? -1 : 1)); };
 function mpLobbyTick(dt){
   const L = MP.lobby; if(!L || !MP.ch) return;
-  L.t -= dt; if(L.t <= 0){ L.t = .5; mpSend('l', { nm: S.name, t0: MP.t0 }); }
+  L.t -= dt; if(L.t <= 0){ L.t = .5; mpSend('l', { nm: S.name, t0: MP.t0, v: MP_VER }); }
   const list = mpLobbyList();
-  if(list.length >= L.size && list[0].id === MP.me && G.t - L.since > 1.2){ // everyone's here and I came first: start
+  if(list.length >= L.size && list[0].id === MP.me && G.t - L.since > 1.2 && !list.slice(0, L.size).some(o => o.old)){ // nobody may start on a different version // everyone's here and I came first: start
     const go = { ids: list.slice(0, L.size).map(o => o.id), n: L.size }; mpSend('go', go); mpGo(Object.assign({ id: MP.me }, go)); }
 }
 function mpGo(p){
@@ -2182,9 +2183,11 @@ function chatInput(){ // a plain one-line box over the canvas (16px text so phon
   const inp = document.createElement('input'); inp.maxLength = 30; inp.placeholder = '할 말 (30자)'; inp.enterKeyHint = 'send'; inp.autocomplete = 'off';
   inp.style.cssText = 'flex:1;min-width:0;font:16px sans-serif;padding:8px;border:1px solid #6e4c32;border-radius:4px;background:#120b08;color:#efe2c8';
   const btn = (label, fn, main) => { const x = document.createElement('button'); x.textContent = label; x.style.cssText = 'padding:8px 12px;border:0;border-radius:4px;font:bold 15px sans-serif;background:' + (main ? '#e0782e;color:#2a0e02' : '#4a3a2e;color:#efe2c8'); x.onclick = fn; d.appendChild(x); };
-  const send = () => { const v = inp.value; d.remove(); mpSayText(v); };
+  const send = () => { if(!d.isConnected) return; const v = inp.value; d.remove(); mpSayText(v); try{ cv.focus(); }catch(e){} };
   d.appendChild(inp); btn('보내기', send, true); btn('닫기', () => d.remove());
-  inp.addEventListener('keydown', e => { e.stopPropagation(); if(e.key === 'Enter'){ e.preventDefault(); send(); } if(e.key === 'Escape') d.remove(); });
+  let pend = false; // Enter pressed while the IME still holds the last syllable: send once it lands
+  inp.addEventListener('compositionend', () => { if(pend){ pend = false; setTimeout(send, 0); } });
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if(e.key === 'Enter'){ e.preventDefault(); if(e.isComposing || e.keyCode === 229) pend = true; else send(); } if(e.key === 'Escape') d.remove(); });
   document.body.appendChild(d); releaseKeys(); setTimeout(() => inp.focus(), 30);
 }
 function mpChat(p){
@@ -2196,6 +2199,7 @@ function mpSend(ev, p){ if(MP.ch) try{ MP.ch.send({ type: 'broadcast', event: ev
 function mpRecv(p){
   if(!p || !p.id || p.id === MP.me) return;
   if(MP.lobby){ mpLobbyLeave(); SFX.deny(); toast('이 방은 이미 게임 중이다. 다른 방을 골라라'); return; }
+  if(p.v !== MP_VER && !MP.verWarn){ MP.verWarn = 1; toast('게임 버전이 다른 친구가 있다. 모두 새로고침(F5) 해라'); }
   const o = MP.peers[p.id] || (MP.peers[p.id] = { dx: p.x, dy: p.y });
   Object.assign(o, { st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
   if(p.hits && MP.host && B && B.mp && p.n === B.n) mpApplyHits(p.id, p.hits);
@@ -2219,7 +2223,7 @@ function mpTarget(m){
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
 function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y)]); }
-const mpMe = () => ({ st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, dead: !!B.over, t0: MP.t0 });
+const mpMe = () => ({ v: MP_VER, st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, dead: !!B.over, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
@@ -3073,7 +3077,7 @@ function survDraw(dt){
   const compact = VW < 480, sh2 = compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
   if(B.mp && !B.over) button('chat', VW - 52, vy + 18, 48, 16, G.chatOpen ? '닫기' : '말하기', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
   if(B.mp && G.chatOpen && !B.over){ const cw = Math.min(64, Math.floor((VW - 12) / 4) - 4), cx0 = Math.round((VW - (cw + 4) * 4 + 4) / 2); QCHAT.forEach((t, i) => button('qc' + i, cx0 + (i % 4) * (cw + 4), sy0 - 54 + Math.floor(i / 4) * 24, cw, 21, t, null, () => { mpSay(i); G.chatOpen = false; }, { small: true, kind: 'blue' }));
-    button('qct', cx0, sy0 - 78, (cw + 4) * 4 - 4, 21, '직접 입력하기', null, () => { G.chatOpen = false; chatInput(); }, { small: true, kind: 'gold' }); }
+    button('qct', cx0, sy0 - 78, (cw + 4) * 4 - 4, 21, '직접 입력하기 (Enter)', null, () => { G.chatOpen = false; chatInput(); }, { small: true, kind: 'gold' }); }
   g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
   T('체력', 8, sy0 + 5, { f: 's', c: COL.dim }); bar(36, sy0 + 7, 120, 7, PL.hp / PL.max, PL.hp < PL.max * .35 ? '#ff5a3a' : '#4ab04a'); T(Math.ceil(PL.hp) + '/' + PL.max, 96, sy0 + 6, { f: 's', a: 'c', c: '#ffffff', ol: COL.ink });
   T('필살', 8, sy0 + 22, { f: 's', c: full ? COL.gold : COL.dim }); bar(36, sy0 + 25, 120, 6, B.fev / 100, full ? (Math.sin(G.t * 10) > 0 ? '#ffe070' : '#ff9a3a') : '#c8902a');
@@ -3086,7 +3090,7 @@ function survDraw(dt){
     bx -= fw + 4; button('fever', bx, rowY, fw, 30, '필살기', 'F 키', () => svFever(), { kind: 'gold', dis: !full || !!B.over || !!B.pick, small: true });
     { const on = !!S.opts.bossT; bx -= ow + 4; button('bossT', bx, rowY, ow, 30, on ? '보스 ON' : '보스 OFF', '우선 · E', () => toggleBossT(), { kind: on ? 'danger' : 'normal', dis: !!B.over, small: true }); }
     bx -= rw + 4; button('retreat', bx, rowY, rw, 30, '귀환', null, () => svEnd(), { dis: !!B.over, small: true }); }
-  if(B.cleared === 0 && B.st < 10 && !B.pick){ const hl = wrap('끌어서 이동 · 두 번 톡(스페이스)으로 구르기 · 무기는 알아서 휘두른다 · Esc 일시정지', 's', Math.min(VW - 20, 320)); hl.forEach((ln, k) => T(ln, VW / 2, sy0 - 14 - (hl.length - 1 - k) * 11, { f: 's', a: 'c', c: COL.text, ol: COL.ink })); }
+  if(B.cleared === 0 && B.st < 10 && !B.pick && !G.chatOpen){ const hl = wrap('끌어서 이동 · 두 번 톡(스페이스)으로 구르기 · 무기는 알아서 휘두른다 · Esc 일시정지', 's', Math.min(VW - 20, 320)); hl.forEach((ln, k) => T(ln, VW / 2, sy0 - 14 - (hl.length - 1 - k) * 11, { f: 's', a: 'c', c: COL.text, ol: COL.ink })); }
   if(B.pick){ dim(0, 0, VW, VH, .35); centered(survPickDraw); }
   if(B.paused){ dim(0, 0, VW, VH, .5); centered(survPauseDraw); }
   if(B.banner && !B.paused && !B.pick){ const bn = B.banner; bn.t += dt; if(bn.t > 2) B.banner = null; else { const a = bn.t < .2 ? bn.t / .2 : bn.t > 1.6 ? (2 - bn.t) / .4 : 1; g.globalAlpha = a; T(bn.text, VW / 2, vy + 60 - (bn.t < .1 ? (1 - bn.t * 10) * 10 : 0), { f: 'b', z: 3, a: 'c', c: bn.warn || B.boss ? '#ff5a4a' : '#ffd27a', ol: COL.ink }); T(bn.sub, VW / 2, vy + 102, { f: 'b', a: 'c', c: COL.text, ol: COL.ink }); g.globalAlpha = 1; } }
@@ -4002,7 +4006,8 @@ function drawModal(){
     const L = MP.lobby; if(!L){ G.modal = null; return; }
     const list = mpLobbyList(), { x, y } = mwin(236, 270, L.size + '인 · ' + L.party + '번 방');
     T('모이는 중 ' + Math.min(list.length, L.size) + ' / ' + L.size, VW / 2, y + 40, { f: 'b', a: 'c', c: '#8ad8ff' });
-    for(let i = 0; i < L.size; i++){ const r = list[i], yy = y + 62 + i * 20; R(x + 14, yy, 208, 17, r ? '#1e2a34' : '#1a1410'); T(r ? r.nm + (i === 0 ? ' ★' : '') + (r.id === MP.me ? ' (나)' : '') : '기다리는 중' + '.'.repeat(1 + Math.floor(G.t * 2) % 3), x + 22, yy + 3, { f: 's', c: r ? (r.id === MP.me ? '#ffe070' : COL.text) : COL.faint }); }
+    for(let i = 0; i < L.size; i++){ const r = list[i], yy = y + 62 + i * 20; R(x + 14, yy, 208, 17, r ? (r.old ? '#3a1a14' : '#1e2a34') : '#1a1410'); T(r ? r.nm + (i === 0 ? ' ★' : '') + (r.id === MP.me ? ' (나)' : '') + (r.old ? ' · 새로고침 필요' : '') : '기다리는 중' + '.'.repeat(1 + Math.floor(G.t * 2) % 3), x + 22, yy + 3, { f: 's', c: r ? (r.old ? COL.bad : r.id === MP.me ? '#ffe070' : COL.text) : COL.faint }); }
+    if(list.slice(0, L.size).some(o => o.old)) T('버전이 다른 친구가 있다: 그 친구가 새로고침(F5)하면 출발', VW / 2, y + 172, { f: 's', a: 'c', c: COL.bad });
     T('다 모이면 바로 출발 · 일시정지 없음', VW / 2, y + 62 + L.size * 20 + 4, { f: 's', a: 'c', c: COL.faint });
     [0, 6, 5].forEach((qi, j) => button('lqc' + j, x + 14 + j * 53, y + 200, 49, 20, QCHAT[qi], null, () => mpSay(qi), { small: true, kind: 'blue' }));
     button('lqct', x + 173, y + 200, 49, 20, '입력', null, () => chatInput(), { small: true, kind: 'gold' });
@@ -4277,6 +4282,7 @@ addEventListener('keydown', e => {
   if(e.ctrlKey || e.metaKey || e.altKey){ releaseKeys(); return; }
   audioInit();
   const kk = keyOf(e), act = e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter';
+  if((e.key === 'Enter' || e.code === 'NumpadEnter') && MP.ch && ((G.scr === 'battle' && B && B.mp && !B.over) || MP.lobby)){ e.preventDefault(); chatInput(); return; } // together: Enter = chat (Space still rolls)
   if(G.scr === 'battle' && B && B.surv && (e.key === 'Escape' || kk === 'p')){ svPause(); return; }
   if(G.scr === 'battle' && B && B.surv && !e.repeat && kk === 'e'){ toggleBossT(); return; }
   if(e.key === 'Escape'){ if(G.modal && !['destroy', 'job', 'ench', 'inherit', 'lobby'].includes(G.modal.k)) G.modal = null; return; }

@@ -1780,11 +1780,12 @@ let B = null;
 function startBattle(s){ if(!diffOpen(curDiff()) || s > PG().stage) return; startSurv(s); }
 function loseBattle(why){ if(!B || B.over) return; B.over = { win: false, why: why || 'time', t: 0 }; SFX.lose(); save(); }
 function leaveBattle(){
+  mpLeave();
   const won = B && B.over && B.over.win;
   G.scr = 'game'; G.tab = 'hunt'; B = null; playSong('forge');
   say(pick(won ? LINES.backWin : LINES.backLose));
 }
-function battleUpdate(dt){ if(B) survUpdate(dt); }
+function battleUpdate(dt){ if(B) survUpdate(dt); mpTick(dt); }
 
 // ---------------- ranking: claude.ai's db when the game runs as an artifact, Supabase on its own web site ----------------
 // Supabase project (fill in after creating it). The anon key is meant to be public; row-level security keeps each row writable only by its owner.
@@ -1994,10 +1995,10 @@ function startEndless(tk){
 function enStageClear(){
   const n = B.n, wasBoss = B.boss;
   B.score += n * (wasBoss ? 150 : 20); B.cleared++;
-  const bonus = Math.round(enKillGold() * (wasBoss ? 200 : 40)); S.gold += bonus; S.earned += bonus; B.gold += bonus;
+  const bonus = B.mp ? 0 : Math.round(enKillGold() * (wasBoss ? 200 : 40)); S.gold += bonus; S.earned += bonus; B.gold += bonus;
   if(wasBoss){ S.bosses++; track('boss', 1); const sh = 2 + Math.floor(n / 10); S.sh += sh; B.shards += sh; stoneDrop(enStoneP(n));
-    bossLoot({ en: n });
-    if(n % 10 === 0){ // a forging kit from the boss on every 10th floor: one swing's gold (+ one swing's 가호 I/II)
+    if(!B.mp) bossLoot({ en: n });
+    if(n % 10 === 0 && !B.mp){ // a forging kit from the boss on every 10th floor: one swing's gold (+ one swing's 가호 I/II)
       const L = S.lv, t = gTier(L), c = cost(L), gk = t && t <= 2 ? gNeed(L) : 0;
       S.gold += c; S.earned += c; B.gold += c; if(gk) S.gh[t] += gk; // III/IV and repair tickets now come from boss drops only
       B.kits = (B.kits || 0) + 1; B.nums.push({ x: B.P.x, y: B.P.y - 60, v: '강화 꾸러미!', crit: true, t: -.4, c: '#ffd27a', big: true });
@@ -2006,6 +2007,7 @@ function enStageClear(){
   B.clearing = true; B.feverLock = true;
   try{ for(const o of B.mons.slice()) if(o.die === 0 && o.kind !== 'boss'){ o.hp = 0; o.die = .001; svKill(o); } } finally { B.clearing = false; B.feverLock = false; }
   B.n = n + 1; const nai = enArea(B.n), newArea = nai !== B.ai;
+  if(B.mp && !MP.remote) mpSend('f', { n: B.n });
   track('climb', 0, B.n); S.enMax = Math.max(S.enMax || 0, B.n); checkAch();
   B.ai = nai; B.boss = B.n % EN_BOSS === 0; B.need = B.boss ? 1 : enNeed(B.n); B.pr = 0; B.kills = 0; B.bossOut = false; B.st = 0; B.treasure = 0; B.spawnT = .8;
   B.P.hp = Math.min(B.P.max, B.P.hp + B.P.max * (wasBoss ? .5 : .15)); B.P.inv = 1;
@@ -2016,10 +2018,70 @@ function enStageClear(){
 }
 function enRecord(){ // once per run: keep the best score (and its time and floor)
   if(!B || !B.endless || B.rec) return; B.rec = 1;
+  if(B.mp){ log('같이 하기 ' + B.n + '층'); save(); return; } /* together runs stay off the solo board */
   const t = Math.round(B.t), best = S.eb || { s: 0 };
   B.newBest = B.score > (best.s || 0);
   if(B.newBest){ S.eb = { s: B.score, t, d: B.n, w: B.wid }; /* w: the sword used in that run */ banner('ach', '무한 도전 신기록', fmt(B.score) + '점 · ' + B.n + '층'); rankPush(); }
   log('무한 도전 ' + B.n + '층 · ' + fmt(B.score) + '점'); save();
+}
+// ===================== together (같이 하기): friends with the same class code climb one endless run together =====================
+/* each device keeps its own monsters; what is shared: everyone's smith on screen, the kill bar, and the floor. No gold in this mode. */
+const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false };
+const mpAvail = () => !window.claude && !!(SB.url && SB.key);
+function mpLoadLib(){
+  return new Promise((res, rej) => {
+    if(window.supabase && window.supabase.createClient) return res();
+    const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+    sc.onload = () => res(); sc.onerror = () => rej(new Error('lib')); document.head.appendChild(sc);
+  });
+}
+async function mpJoin(tk){
+  if(!S.room){ toast('먼저 반 코드를 정해라'); setRoom(); return; }
+  if(MP.joining) return; MP.joining = true; toast('친구들을 찾는 중...');
+  try{
+    await mpLoadLib();
+    if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false } });
+    mpLeave();
+    MP.me = Math.random().toString(36).slice(2, 10);
+    const ch = MP.cli.channel('sf-together-' + S.room, { config: { broadcast: { self: false } } });
+    ch.on('broadcast', { event: 'p' }, m => mpRecv(m.payload));
+    ch.on('broadcast', { event: 'f' }, m => mpFloor(m.payload));
+    await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('timeout')), 9000); ch.subscribe(st => { if(st === 'SUBSCRIBED'){ clearTimeout(t); res(); } else if(st === 'CHANNEL_ERROR' || st === 'TIMED_OUT'){ clearTimeout(t); rej(new Error(st)); } }); });
+    MP.ch = ch; MP.peers = {}; G.modal = null;
+    startEndless(tk); B.mp = true; MP.on = true;
+    B.banner = { t: 0, text: '같이 하기', sub: '반 ' + S.room + ' · 골드 없이 함께 오른다' };
+  }catch(e){ SFX.deny(); toast('같이 하기에 연결하지 못했다'); }
+  MP.joining = false;
+}
+function mpLeave(){ if(MP.ch && MP.cli){ try{ MP.cli.removeChannel(MP.ch); }catch(e){} } MP.ch = null; MP.on = false; MP.peers = {}; }
+function mpSend(ev, p){ if(MP.ch) try{ MP.ch.send({ type: 'broadcast', event: ev, payload: Object.assign({ id: MP.me }, p) }); }catch(e){} }
+function mpRecv(p){
+  if(!B || !B.mp || !p || !p.id) return;
+  const o = MP.peers[p.id] || (MP.peers[p.id] = { k: p.k, n: p.n, dx: p.x, dy: p.y });
+  if(p.n === B.n && o.n === B.n && p.k > o.k && !B.boss && !B.over) B.pr += p.k - o.k; /* friends' kills fill the same bar */
+  Object.assign(o, p, { seen: G.t });
+}
+function mpFloor(p){
+  if(!B || !B.mp || B.over || !p || !(p.n > B.n)) return;
+  MP.remote = true;
+  try{ let guard = 0; while(B.n < p.n && guard++ < 10){ for(const m of B.mons) if(m.kind === 'boss' && m.die === 0){ m.die = .001; m.fled = true; } enStageClear(); } }
+  finally { MP.remote = false; }
+}
+function mpTick(dt){
+  if(!B || !B.mp) return;
+  MP.sendT -= dt;
+  if(MP.sendT <= 0){ MP.sendT = .1; mpSend('p', { nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, k: B.runKills, dead: !!(B.over && !B.over.win) }); }
+  for(const id in MP.peers){ const o = MP.peers[id]; if(G.t - o.seen > 5){ delete MP.peers[id]; continue; } const k = Math.min(1, dt * 12); o.dx += (o.x - o.dx) * k; o.dy += (o.y - o.dy) * k; }
+}
+function peerDraw(o){
+  const x = Math.round(o.dx), y = Math.round(o.dy), c = (WL[o.ln] || WL.c).col, f = o.f < 0 ? -1 : 1, mv = Math.hypot(o.x - o.dx, o.y - o.dy) > .5, st = mv ? Math.sin(G.t * 14) : 0;
+  g.globalAlpha = o.dead ? .35 : .9;
+  R(x - 3, y + 1, 3, 5 - (st > 0 ? 1 : 0), COL.ink); R(x + 1, y + 1, 3, 5 - (st < 0 ? 1 : 0), COL.ink);
+  const by = y - 6; R(x - 4, by, 9, 8, COL.ink); R(x - 3, by + 1, 7, 6, '#6a4a32'); R(x - 2, by + 2, 5, 5, c);
+  R(x - 4, by - 7, 9, 8, COL.ink); R(x - 3, by - 6, 7, 6, '#f2c9a0'); R(x - 3, by - 6, 7, 2, '#3a2416'); P(x + f * 2, by - 3, COL.ink);
+  g.globalAlpha = 1;
+  T(o.dead ? o.nm + ' (쓰러짐)' : o.nm, x, by - 20, { f: 's', a: 'c', c: o.dead ? COL.faint : '#bfe0ff', ol: COL.ink });
+  if(!o.dead){ R(x - 8, by - 9, 16, 2, COL.ink); R(x - 8, by - 9, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a'); }
 }
 const fmtT = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 // run cards: [name, max, desc(n), req(B) → offerable, rarity]
@@ -2306,7 +2368,8 @@ function svKill(m){
   S.kills++; track('kill', 1);
   B.combo++; B.comboT = 2; B.maxCombo = Math.max(B.maxCombo, B.combo);
   if([25, 50, 100, 200, 400, 800].includes(B.combo) && !B.clearing){ B.nums.push({ x: B.P.x, y: B.P.y - 34, v: B.combo + ' 연속 처치!', crit: true, t: 0, c: B.combo >= 100 ? '#ff8ad8' : '#ffd27a', big: true }); SFX.ach(); }
-  const kg = Math.max(1, Math.round((B.endless ? enKillGold() : killGold(B.s) * dif()[6]) * m.gK * (m.kind === 'normal' ? 120 / (120 + B.kills) : 1) * (1 + Math.min(B.combo, 100) / 200) * (1 + en('greed') * .2) * (B.fx === 'rainbow' ? 1.25 : B.fx === 'prism' ? 1.2 : 1)));
+  let kg = Math.max(1, Math.round((B.endless ? enKillGold() : killGold(B.s) * dif()[6]) * m.gK * (m.kind === 'normal' ? 120 / (120 + B.kills) : 1) * (1 + Math.min(B.combo, 100) / 200) * (1 + en('greed') * .2) * (B.fx === 'rainbow' ? 1.25 : B.fx === 'prism' ? 1.2 : 1)));
+  if(B.mp) kg = 0; /* together mode: no gold */
   B.gold += kg; S.gold += kg; S.earned += kg;
   if(m.kind !== 'normal') B.nums.push({ x: m.x, y: m.y - 14, v: '+' + fmt(kg) + ' G', crit: false, t: 0, c: '#f7d24a' });
   if(B.ai >= 1 && (m.kind === 'boss' || m.kind === 'elite' || Math.random() < .05)){ const n = m.kind === 'boss' ? 3 + Math.floor(Math.random() * 4) : 1; S.sh += n; B.shards += n; }
@@ -2677,6 +2740,7 @@ function survDraw(dt){
     const cx = c.x0 + (c.x - c.x0) * k, cy = c.y0 + (c.y - c.y0) * k - Math.sin(k * Math.PI) * 26;
     R(Math.round(cx) - 3, Math.round(cy) - 3, 7, 7, mixc(B.wcol, '#000000', .3)); R(Math.round(cx) - 2, Math.round(cy) - 2, 5, 5, B.wcol); R(Math.round(cx) - 1, Math.round(cy) - 1, 2, 2, '#ffffff');
   }
+  if(B.mp) for(const id in MP.peers){ const o = MP.peers[id]; if(o.n === B.n) peerDraw(o); }
   // hero + weapon (and the fading afterimages of a roll)
   for(let i = (B.ghosts || []).length - 1; i >= 0; i--){ const gh = B.ghosts[i]; gh.t -= dt; if(gh.t <= 0){ B.ghosts.splice(i, 1); continue; } g.globalAlpha = gh.t / .22 * .45; heroDraw(gh.x, gh.y, 0); g.globalAlpha = 1; }
   if(B.ghosts && B.ghosts.length > 20) B.ghosts.splice(0, B.ghosts.length - 20);
@@ -2725,7 +2789,7 @@ function survDraw(dt){
   { const bm = B.mons.find(m => m.kind === 'boss' && m.die === 0); if(bm){ T(bm.name, VW / 2, vy + 8, { f: 'b', a: 'c', c: '#ff7a6a', ol: COL.ink }); bar(Math.round(VW / 2 - 100), vy + 22, 200, 5, bm.hp / bm.max, '#d8402e'); } }
   // xp bar along the top of the arena
   R(0, vy, VW, 4, COL.ink); R(0, vy, Math.round(VW * (B.boss ? 0 : Math.min(1, B.pr / B.need))), 3, '#e0b040');
-  T(B.endless ? '카드 ' + (B.lv - 1) + '장 · 적 방어 ' + Math.round(enDef(B.n) * 100) + '%' + (B.tr ? ' · ' + ENT[B.tr][0] : '') : 'Lv ' + B.lv + (B.run > 1 ? ' · 연속 ' + B.run + '판' : ''), 4, vy + 5, { f: 's', c: '#bfe0ff', ol: COL.ink });
+  T(B.endless ? '카드 ' + (B.lv - 1) + '장 · 적 방어 ' + Math.round(enDef(B.n) * 100) + '%' + (B.tr ? ' · ' + ENT[B.tr][0] : '') + (B.mp ? ' · 같이 ' + (1 + Object.keys(MP.peers).length) + '명' : '') : 'Lv ' + B.lv + (B.run > 1 ? ' · 연속 ' + B.run + '판' : ''), 4, vy + 5, { f: 's', c: '#bfe0ff', ol: COL.ink });
   if(B.combo >= 10) T(B.combo + ' 처치 연속', VW - 4, vy + 5, { f: 's', a: 'r', c: B.combo >= 50 ? '#ffe070' : COL.text, ol: COL.ink });
   const fz = Object.keys(B.fus); if(fz.length) T(fz.map(f => FUS[f][0]).join(' · '), 4, vy + 17, { f: 's', c: '#ffd27a', ol: COL.ink });
   g.restore();
@@ -3622,7 +3686,10 @@ function drawModal(){
       hit('et' + k, 10, yy, 250, 84, () => { SFX.click(); m.sel = k; });
     });
     wrap('층마다 몬스터가 늘고 단단해진다. 카드는 5층마다 나오는 보스를 잡아야 얻는다. 점수와 시간은 랭킹에 남는다.', 's', 240).forEach((ln, j) => T(ln, 14, 366 + j * 11, { f: 's', c: COL.faint }));
-    button('enGo', 12, 404, 246, 32, '도전 시작', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
+    if(mpAvail()){
+      button('enGo', 12, 404, 160, 32, '혼자 도전', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
+      button('enMp', 176, 404, 82, 32, '같이 하기', S.room ? '반 ' + S.room : '반 코드 필요', () => mpJoin(m.sel), { kind: 'blue' });
+    } else button('enGo', 12, 404, 246, 32, '도전 시작', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
     button('enNo', 12, 440, 246, 26, '돌아가기', null, () => { G.modal = null; }, { small: true });
   } else if(m.k === 'vault'){
     const n = S.vcap, h = 118 + n * 46;

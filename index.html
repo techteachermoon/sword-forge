@@ -240,7 +240,7 @@ function toLogical(e){ const b = cv.getBoundingClientRect(); return [(e.clientX 
 // on a button it presses that button at once, on the battlefield it dashes. So steering with one thumb and tapping
 // 구르기 with the other keeps you moving.
 let PRIM = null;
-const QUICK = new Set(['dash', 'fever', 'bossT', 'pz']); // battle buttons fire the moment they're touched
+const QUICK = new Set(['dash', 'fever', 'bossT', 'pz', 'chat', 'qc0', 'qc1', 'qc2', 'qc3', 'qc4', 'qc5', 'qc6', 'qc7']); // battle buttons fire the moment they're touched
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   audioInit();
@@ -1925,6 +1925,22 @@ function cleanRow(id, d){
 }
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
+// party boards (supabase_party.sql): one row per player per party size, their best floor in that size
+async function partyPush(size){
+  const r = (S.ebp || {})[size]; if(!r || !RK.web || !RK.uid || RK.noParty || !S.name) return;
+  try{ await sbFetch('/rest/v1/party?on_conflict=id,size', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify([{ id: RK.uid, size, room: roomKey(), name: S.name, title: S.title || '', es: r.s, et: r.t, ed: r.d, ew: WEP[r.w] ? r.w : '', pw: String(r.pw || '').slice(0, 60) }]) }); RK.pbAt = {}; }
+  catch(e){ if(e && (e.status === 404 || /party/.test(e.message || ''))) RK.noParty = true; }
+}
+function partyPull(size){
+  RK.pb = RK.pb || {}; RK.pbAt = RK.pbAt || {};
+  if(!RK.web || RK.pbBusy || (RK.pbAt[size] && G.t - RK.pbAt[size] < 8)) return;
+  RK.pbAt[size] = G.t; RK.pbBusy = true;
+  const scope = G.rankScope === 'room' && S.room ? 'room=eq.' + encodeURIComponent(roomKey()) : 'room=' + (isSchoolSite() ? 'not.like.' : 'like.') + encodeURIComponent('~*');
+  (async () => { try{ const rows = await sbFetch('/rest/v1/party?select=*&size=eq.' + size + '&' + scope + '&order=ed.desc,es.desc&limit=100', { headers: await sbAuthH() });
+      RK.pb[size] = (rows || []).map(r => { const c = cleanRow(r.id, r); if(c) c.pw = String(r.pw || '').replace(/[\u0000-\u001f]/g, '').slice(0, 60); return c; }).filter(Boolean); RK.noParty = false; }
+    catch(e){ if(e && (e.status === 404 || /party/.test(e.message || ''))) RK.noParty = true; }
+    RK.pbBusy = false; })();
+}
 function rankPush(){
   if(RK.timer) clearTimeout(RK.timer);
   RK.timer = setTimeout(async () => {
@@ -2076,7 +2092,13 @@ function enStageClear(){
 }
 function enRecord(){ // once per run: keep the best score (and its time and floor)
   if(!B || !B.endless || B.rec) return; B.rec = 1;
-  if(B.mp){ log('같이 하기 ' + B.n + '층'); save(); return; } /* together runs stay off the solo board */
+  const size = B.mp ? clamp(B.mpSize || B.mpMax || 1, 1, MP_MAX) : 1;
+  if(size > 1){ // a party run: its own board per party size
+    const t = Math.round(B.t), pw = Object.values(B.mpWith || {}).slice(0, 5).join(', '), best = (S.ebp = S.ebp || {})[size] || { s: 0, d: 0 };
+    B.newBest = B.n > (best.d || 0) || (B.n === (best.d || 0) && B.score > (best.s || 0));
+    if(B.newBest){ S.ebp[size] = { s: B.score, t, d: B.n, w: B.wid, pw }; banner('ach', size + '인 무한 도전 신기록', B.n + '층'); partyPush(size); }
+    log('같이 하기 ' + size + '인 ' + B.n + '층'); save(); return;
+  }
   const t = Math.round(B.t), best = S.eb || { s: 0 };
   B.newBest = B.n > (best.d || 0) || (B.n === (best.d || 0) && B.score > (best.s || 0)); /* the floor counts first; the score only breaks a tie */
   if(B.newBest){ S.eb = { s: B.score, t, d: B.n, w: B.wid }; /* w: the sword used in that run */ banner('ach', '무한 도전 신기록', B.n + '층 · ' + fmt(B.score) + '점'); rankPush(); }
@@ -2089,7 +2111,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_MAX = 4, MP_DT = .15, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
+const MP_MAX = 6, MP_DT = .15, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
   return new Promise((res, rej) => {
@@ -2101,35 +2123,59 @@ function mpLoadLib(){
 const mpLive = o => !o.dead && G.t - o.seen < 2;
 const mpPeers = () => B ? Object.values(MP.peers).filter(o => mpLive(o) && o.n === B.n) : [];
 const mpN = () => 1 + mpPeers().length; /* players on this floor, me included */
-async function mpJoin(tk, party){
+// 같이 하기 entry: pick a party size (2~6) and a room; wait in the lobby until that many are in, then everyone starts at once.
+// The first one in the lobby leads: it sends 'go' with the members, and runs the field as host. A room with a game on can't be joined.
+async function mpJoin(tk, party, size){
   if(!S.room){ toast('먼저 ' + RW() + ' 코드를 정해라'); setRoom(); return; }
-  if(MP.joining) return; MP.joining = true; toast(party + '번 방에 들어가는 중...');
+  if(MP.joining) return; MP.joining = true; toast(size + '인 ' + party + '번 방에 들어가는 중...');
   try{
     await mpLoadLib();
     if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { params: { eventsPerSecond: 20 } } });
     mpLeave();
     MP.me = Math.random().toString(36).slice(2, 10); MP.party = party;
-    const ch = MP.cli.channel('sf-together-' + roomKey() + '-' + party, { config: { broadcast: { self: false } } });
+    const ch = MP.cli.channel('sf-together-' + roomKey() + '-' + size + 'p-' + party, { config: { broadcast: { self: false } } });
     ch.on('broadcast', { event: 'p' }, m => mpRecv(m.payload));
     ch.on('broadcast', { event: 'w' }, m => mpWorld(m.payload));
     ch.on('broadcast', { event: 'f' }, m => mpFloor(m.payload));
+    ch.on('broadcast', { event: 'l' }, m => mpLobbyHi(m.payload));
+    ch.on('broadcast', { event: 'go' }, m => mpGo(m.payload));
+    ch.on('broadcast', { event: 'c' }, m => mpChat(m.payload));
     await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('timeout')), 9000); ch.subscribe(st => { if(st === 'SUBSCRIBED'){ clearTimeout(t); res(); } else if(st === 'CHANNEL_ERROR' || st === 'TIMED_OUT'){ clearTimeout(t); rej(new Error(st)); } }); });
-    MP.ch = ch; MP.peers = {};
-    await new Promise(r => setTimeout(r, 1300)); // listen a moment: who is already in this room?
-    if(Object.values(MP.peers).filter(mpLive).length >= MP_MAX){ mpLeave(); SFX.deny(); toast(party + '번 방은 꽉 찼다 (' + MP_MAX + '명)'); MP.joining = false; return; }
-    G.modal = null;
-    startEndless(tk); B.mp = true; MP.on = true;
-    Object.assign(MP, { host: false, ep: 0, t0: Date.now(), joinT: G.t, lastW: -9, hits: [], hurts: [], killed: new Map(), sendT: 0 });
-    B.banner = { t: 0, text: '같이 하기', sub: RW() + ' ' + S.room + ' · ' + party + '번 방 · 함께 사냥한다' };
+    MP.ch = ch; MP.peers = {}; MP.t0 = Date.now(); MP.chat = [];
+    MP.lobby = { size, party, tk, mem: {}, t: 0, since: G.t };
+    G.modal = { k: 'lobby' };
   }catch(e){ mpLeave(); SFX.deny(); toast('같이 하기에 연결하지 못했다'); }
   MP.joining = false;
 }
-function mpLeave(){ if(MP.ch && MP.cli){ try{ MP.cli.removeChannel(MP.ch); }catch(e){} } MP.ch = null; MP.on = false; MP.peers = {}; MP.host = false; MP.hits = []; MP.hurts = []; }
+function mpLobbyHi(p){ const L = MP.lobby; if(!L || !p || !p.id || p.id === MP.me) return; L.mem[p.id] = { nm: badName(p.nm) ? '친구' : String(p.nm || '친구').slice(0, 8), t0: p.t0 || 0, seen: G.t }; }
+const mpLobbyList = () => { const L = MP.lobby; return [{ id: MP.me, nm: S.name, t0: MP.t0 }].concat(Object.entries(L.mem).filter(([, o]) => G.t - o.seen < 2.5).map(([id, o]) => ({ id, nm: o.nm, t0: o.t0 }))).sort((a, b) => a.t0 - b.t0 || (a.id < b.id ? -1 : 1)); };
+function mpLobbyTick(dt){
+  const L = MP.lobby; if(!L || !MP.ch) return;
+  L.t -= dt; if(L.t <= 0){ L.t = .5; mpSend('l', { nm: S.name, t0: MP.t0 }); }
+  const list = mpLobbyList();
+  if(list.length >= L.size && list[0].id === MP.me && G.t - L.since > 1.2){ // everyone's here and I came first: start
+    const go = { ids: list.slice(0, L.size).map(o => o.id), n: L.size }; mpSend('go', go); mpGo(Object.assign({ id: MP.me }, go)); }
+}
+function mpGo(p){
+  const L = MP.lobby; if(!L || !p || !Array.isArray(p.ids)) return;
+  if(!p.ids.includes(MP.me)){ mpLeave(); MP.lobby = null; if(G.modal && G.modal.k === 'lobby') G.modal = null; SFX.deny(); toast('먼저 모인 ' + p.n + '명이 출발했다. 다른 방을 골라라'); return; }
+  MP.lobby = null; G.modal = null;
+  startEndless(L.tk); B.mp = true; B.mpSize = L.size; B.mpMax = L.size; MP.on = true;
+  Object.assign(MP, { host: p.id === MP.me, ep: 1, joinT: G.t, lastW: G.t, hits: [], hurts: [], killed: new Map(), sendT: 0 });
+  B.banner = { t: 0, text: L.size + '인 같이 하기', sub: RW() + ' ' + S.room + ' · ' + L.party + '번 방 · 출발!' };
+}
+function mpLobbyLeave(){ mpLeave(); MP.lobby = null; G.modal = null; }
+// quick chat: short fixed lines (safe for a class), shown over the speaker's head and in a small log
+const QCHAT = ['좋아!', '도와줘!', '보스 잡자!', '모여!', '고마워!', '잠깐만!', '가자!', 'ㅋㅋㅋ'];
+function mpSay(i){ if(!MP.ch || !QCHAT[i] || G.t - (MP.chatT || -9) < 1.2) return; MP.chatT = G.t; mpSend('c', { i, nm: S.name }); mpChat({ id: MP.me, i, nm: S.name }); }
+function mpChat(p){ if(!p || !QCHAT[p.i]) return; const nm = p.id === MP.me ? S.name : badName(p.nm) ? '친구' : String(p.nm || '친구').slice(0, 8); MP.chat = (MP.chat || []).concat([{ id: p.id, nm, t: QCHAT[p.i], at: G.t }]).slice(-4); if(p.id !== MP.me) SFX.blip(); }
+function mpLeave(){ MP.lobby = null; if(MP.ch && MP.cli){ try{ MP.cli.removeChannel(MP.ch); }catch(e){} } MP.ch = null; MP.on = false; MP.peers = {}; MP.host = false; MP.hits = []; MP.hurts = []; }
 function mpSend(ev, p){ if(MP.ch) try{ MP.ch.send({ type: 'broadcast', event: ev, payload: Object.assign({ id: MP.me }, p) }); }catch(e){} }
 function mpRecv(p){
   if(!p || !p.id || p.id === MP.me) return;
+  if(MP.lobby){ mpLobbyLeave(); SFX.deny(); toast('이 방은 이미 게임 중이다. 다른 방을 골라라'); return; }
   const o = MP.peers[p.id] || (MP.peers[p.id] = { dx: p.x, dy: p.y });
-  Object.assign(o, { id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
+  Object.assign(o, { st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
   if(p.hits && MP.host && B && B.mp && p.n === B.n) mpApplyHits(p.id, p.hits);
 }
 // host: a friend's blows land on the real monsters
@@ -2151,7 +2197,7 @@ function mpTarget(m){
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
 function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y)]); }
-const mpMe = () => ({ nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, dead: !!B.over, t0: MP.t0 });
+const mpMe = () => ({ st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, dead: !!B.over, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
@@ -2161,9 +2207,10 @@ function mpSnap(){
 }
 // everyone but the host: copy the host's field
 function mpWorld(p){
+  if(MP.lobby){ mpRecv(p); return; }
   if(!B || !B.mp || !p || p.id === MP.me || !(p.ep >= MP.ep)) return; // an older host (back from a hidden tab) is ignored
   if(MP.host){ if(p.ep === MP.ep && p.id < MP.me) return; MP.host = false; } // two hosts at once: the newer one stays
-  MP.ep = p.ep; MP.lastW = G.t; mpRecv(p);
+  MP.ep = p.ep; MP.lastW = G.t; mpRecv(p); for(const o of Object.values(MP.peers)) o.isHost = o.id === p.id;
   if(B.over) return;
   if(p.n > B.n) mpFloor({ n: p.n });
   if(p.n !== B.n) return;
@@ -2198,6 +2245,7 @@ function mpTick(dt){
   if(!B || !B.mp) return;
   for(const id in MP.peers){ const o = MP.peers[id]; if(G.t - o.seen > 5){ delete MP.peers[id]; continue; } const k = Math.min(1, dt * 12); o.dx += (o.x - o.dx) * k; o.dy += (o.y - o.dy) * k; }
   if(MP.host && B.over) MP.host = false; // fallen or gone home: someone else runs the field
+  if(!B.over){ const ps = mpPeers(); B.mpMax = Math.max(B.mpMax || 1, 1 + ps.length); B.mpWith = B.mpWith || {}; for(const o of ps) if(o.nm && !badName(o.nm)) B.mpWith[o.id] = String(o.nm).slice(0, 8); } // for the party board
   if(!MP.host && !B.over && G.t - MP.lastW > 1.6 && G.t - MP.joinT > 1.2){ // nobody is running the field: whoever has been here longest takes over
     const c = [{ id: MP.me, t0: MP.t0 }].concat(mpPeers().map(o => ({ id: o.id, t0: o.t0 || 0 }))).sort((a, b) => a.t0 - b.t0 || (a.id < b.id ? -1 : 1));
     if(c[0].id === MP.me){ MP.host = true; MP.ep++; MP.hurts = []; for(const m of B.mons){ if(m.tx != null){ m.x = m.tx; m.y = m.ty; } } }
@@ -2207,6 +2255,31 @@ function mpTick(dt){
     if(MP.host) mpSend('w', mpSnap());
     else mpSend('p', Object.assign(mpMe(), MP.hits.length ? { hits: MP.hits.splice(0, 120) } : {})); }
 }
+// 같이 하기 party panel: every member's health, what they are doing, and the damage they landed this run
+function drawDmgMeter(x, y){
+  const rows = [{ nm: S.name, dm: B.dmgDone || 0, ln: B.line, hp: B.P.hp / B.P.max * 100, st: B.pick ? 1 : B.paused ? 2 : 0, dead: !!B.over, me: true, host: MP.host }]
+    .concat(Object.values(MP.peers).filter(o => G.t - o.seen < 5).map(o => ({ nm: badName(o.nm) ? '친구' : String(o.nm || '친구'), dm: o.dm || 0, ln: o.ln, hp: o.hp || 0, st: o.st || 0, dead: o.dead, far: o.n !== B.n, host: o.id === mpHostId() })));
+  rows.sort((a, b) => b.dm - a.dm);
+  const tot = rows.reduce((a, r) => a + r.dm, 0) || 1, top = rows[0].dm || 1, w = 128;
+  g.globalAlpha = .55; R(x - 2, y - 2, w + 4, rows.length * 12 + 13, '#000'); g.globalAlpha = 1;
+  T('파티 · 딜량', x, y - 1, { f: 's', c: COL.dim });
+  rows.forEach((r, i) => { const yy = y + 10 + i * 12, c = (WL[r.ln] || WL.c).col;
+    g.globalAlpha = r.dead ? .35 : .8; R(x, yy + 1, Math.max(1, Math.round(w * r.dm / top)), 10, mixc(c, '#000000', .5)); g.globalAlpha = 1;
+    T(String(r.nm).slice(0, 5) + (r.host ? '★' : ''), x + 2, yy, { f: 's', c: r.dead ? COL.faint : r.me ? '#ffe070' : COL.text, ol: COL.ink });
+    // health bar, or what they're up to
+    const hx = x + 46;
+    if(r.dead) T('쓰러짐', hx, yy, { f: 's', c: COL.bad, ol: COL.ink });
+    else if(r.far) T('이동 중', hx, yy, { f: 's', c: COL.dim, ol: COL.ink });
+    else { R(hx, yy + 4, 26, 4, COL.ink); R(hx + 1, yy + 5, Math.round(24 * clamp(r.hp / 100, 0, 1)), 2, r.hp < 30 ? '#e0483a' : r.hp < 60 ? '#e0b040' : '#4ab04a'); if(r.st) T(r.st === 1 ? '카드' : '메뉴', hx + 28, yy, { f: 's', c: '#8ad8ff', ol: COL.ink }); }
+    T(fmtK(r.dm) + ' ' + Math.round(r.dm / tot * 100) + '%', x + w - 1, yy, { f: 's', a: 'r', c: COL.text, ol: COL.ink }); });
+}
+const mpHostId = () => MP.host ? MP.me : (Object.values(MP.peers).find(o => o.isHost && G.t - o.seen < 2) || {}).id;
+function chatBubble(id, x, y){ // the last quick-chat line from this player, for 2.5 s
+  const c = (MP.chat || []).filter(m => m.id === id && G.t - m.at < 2.5).pop(); if(!c) return;
+  const w = tw(c.t, 's') + 8; g.globalAlpha = Math.min(1, (2.5 - (G.t - c.at)) * 3);
+  R(Math.round(x - w / 2) - 1, y - 1, w + 2, 14, COL.ink); R(Math.round(x - w / 2), y, w, 12, '#fff6e0'); P(x, y + 12, COL.ink); P(x - 1, y + 12, '#fff6e0');
+  T(c.t, x, y + 1, { f: 's', a: 'c', c: '#2a1c14' }); g.globalAlpha = 1;
+}
 function peerDraw(o){
   const x = Math.round(o.dx), y = Math.round(o.dy), c = (WL[o.ln] || WL.c).col, f = o.f < 0 ? -1 : 1, mv = Math.hypot(o.x - o.dx, o.y - o.dy) > .5, st = mv ? Math.sin(G.t * 14) : 0;
   g.globalAlpha = o.dead ? .35 : .9;
@@ -2214,6 +2287,7 @@ function peerDraw(o){
   const by = y - 6; R(x - 4, by, 9, 8, COL.ink); R(x - 3, by + 1, 7, 6, '#6a4a32'); R(x - 2, by + 2, 5, 5, c);
   R(x - 4, by - 7, 9, 8, COL.ink); R(x - 3, by - 6, 7, 6, '#f2c9a0'); R(x - 3, by - 6, 7, 2, '#3a2416'); P(x + f * 2, by - 3, COL.ink);
   g.globalAlpha = 1;
+  chatBubble(o.id, x, by - 32);
   T((badName(o.nm) ? '친구' : String(o.nm || '친구').slice(0, 8)) + (o.dead ? ' (쓰러짐)' : ''), x, by - 20, { f: 's', a: 'c', c: o.dead ? COL.faint : '#bfe0ff', ol: COL.ink });
   if(!o.dead){ R(x - 8, by - 9, 16, 2, COL.ink); R(x - 8, by - 9, Math.round(16 * clamp(o.hp / 100, 0, 1)), 2, '#4ab04a'); }
 }
@@ -2343,7 +2417,7 @@ function startSurv(s){
   const fam = B.line.length === 2 ? WL[B.line].par : B.line;
   B.fam = fam; B.P.max += Math.min(S.lv, 30) * 5 + en('time') * 15 + ({ g: 90, t: -20, m: -10 }[fam] || 0) + (B.line === 'g2' ? 20 : 0); B.P.hp = B.P.max;
   B.dashMax = B.line === 't2' ? 4 : fam === 't' ? 3 : 2; B.dashCh = B.dashMax;
-  B.diff = diffKey; B.start = s; B.st = 0; B.cleared = 0; B.rw = []; B.runKills = 0;
+  B.diff = diffKey; B.start = s; B.st = 0; B.cleared = 0; B.rw = []; B.runKills = 0; B.dmgDone = 0;
   // level follows the recommended sword level: starting deeper means those cards are picked right away
   B.lv = 1; B.headPicks = stRec(s);
   if(B.line === 'g2') B.shield = 1;
@@ -2457,6 +2531,7 @@ function svHit(m, base, o = {}){
     if(en('echo') && Math.random() < en('echo') * .2){ m.hp -= dmg; B.nums.push({ x: m.x, y: m.y - m.r - 14, v: '메아리!', crit: true, t: 0, c: '#ffb02e' }); }
     if(!B.feverLock) B.fev = Math.min(100, B.fev + .6 * (fx === 'runes' ? 1.5 : 1) * (1 + en('fever') * .4) * (B.fam === 'm' ? 1.3 : 1) * (tr('m_surge') ? 2 : 1));
   }
+  B.dmgDone = (B.dmgDone || 0) + Math.max(0, hp0 - Math.max(0, m.hp)); /* 딜량 미터 (같이 하기) */
   if(B.mp && !MP.host && m.nid && MP.hits.length < 120){ const z = v => v > 0 ? Math.round(v * 10) / 10 : 0; MP.hits.push([m.nid, Math.round(hp0 - m.hp), z(m.burnT), z(m.poisonT), z(m.slowT), z(m.stun)]); }
   if(m.hp <= 0){ m.hp = 0; m.die = .001; svKill(m); }
 }
@@ -2905,6 +2980,7 @@ function survDraw(dt){
   const inv = PL.inv > 0 && Math.floor(G.t * 20) % 2 === 0;
   if(B.blinkT > 0) B.blinkT -= dt; // 점멸: gone for a blink, then there
   if(!inv && !(B.blinkT > 0)) heroDraw(PL.x, PL.y, G.t);
+  if(B.mp) chatBubble(MP.me, PL.x, PL.y - 30);
   if(B.castT > 0){ g.globalAlpha = B.castT * 2.5; for(let a = 0; a < 16; a++){ const an = a / 16 * 6.28 + G.t * 8; P(PL.x + Math.cos(an) * 8, PL.y - 16 + Math.sin(an) * 3, B.wcol); } R(PL.x + 3, PL.y - 26, 2, 12, '#ffffff'); g.globalAlpha = 1; }
   if(B.shield){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(PL.x + Math.cos(an) * 11, PL.y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
   const sw = B.swing, spr = swordFrame(B.wid, G.t), sc = Math.min(.6, (sw ? sw.R : svR()) / spr.W);
@@ -2959,6 +3035,10 @@ function survDraw(dt){
   T(B.endless ? '카드 ' + (B.lv - 1) + '장 · 적 방어 ' + Math.round(enDef(B.n) * 100) + '%' + (B.tr ? ' · ' + ENT[B.tr][0] : '') + (B.mp ? ' · ' + MP.party + '번 방 ' + mpN() + '명' + (MP.host ? ' ★' : '') : '') : 'Lv ' + B.lv + (B.run > 1 ? ' · 연속 ' + B.run + '판' : ''), 4, vy + 5, { f: 's', c: '#bfe0ff', ol: COL.ink });
   if(B.combo >= 10) T(B.combo + ' 처치 연속', VW - 4, vy + 5, { f: 's', a: 'r', c: B.combo >= 50 ? '#ffe070' : COL.text, ol: COL.ink });
   const fz = Object.keys(B.fus); if(fz.length) T(fz.map(f => FUS[f][0]).join(' · '), 4, vy + 17, { f: 's', c: '#ffd27a', ol: COL.ink });
+  if(B.mp){ const my = vy + (fz.length ? 30 : 18); drawDmgMeter(4, my);
+    // the last few quick-chat lines, under the party panel
+    const log = (MP.chat || []).filter(m => G.t - m.at < 8), ly = my + (1 + Object.values(MP.peers).filter(o => G.t - o.seen < 5).length) * 12 + 16;
+    log.forEach((m, i) => { g.globalAlpha = Math.min(1, (8 - (G.t - m.at)) / 1.5); T(m.nm.slice(0, 6) + ': ' + m.t, 4, ly + i * 11, { f: 's', c: m.id === MP.me ? '#ffe070' : COL.text, ol: COL.ink }); }); g.globalAlpha = 1; }
   g.restore();
   if(!B.over && PL.hp < PL.max * .3){ g.globalAlpha = .25 + .15 * Math.sin(G.t * 8); for(let i = 0; i < 6; i++){ g.globalAlpha *= .7; R(0, vy + i, VW, 1, '#ff2a1a'); R(0, vy + vh - 1 - i, VW, 1, '#ff2a1a'); R(i, vy, 1, vh, '#ff2a1a'); R(VW - 1 - i, vy, 1, vh, '#ff2a1a'); } g.globalAlpha = 1; }
   if(B.bossFx){ const k = B.bossFx.t / 1.2; g.globalAlpha = (1 - k) * .35; for(let i = 0; i < 10; i++){ R(0, vy + i * 2, VW, 2, '#5a0000'); R(0, vy + vh - (i + 1) * 2, VW, 2, '#5a0000'); } g.globalAlpha = 1; }
@@ -2968,6 +3048,8 @@ function survDraw(dt){
   if(!B.over && !B.pick && !B.paused) hit('bview', 0, vy, VW, vh, null, { onDown: (x, y) => { if(G.t - B.lastDown < .28 || (B.dashCh > 0 && G.t - (B.lastDash || -9) < .35)) svDash(); B.lastDown = G.t; B.joy = { sx: x, sy: y, x, y }; }, onMove: (x, y) => { if(B.joy){ B.joy.x = x; B.joy.y = y; } }, onUp: () => { B.joy = null; } });
   // ---- HUD strip over the bottom of the battlefield (two rows on a narrow screen)
   const compact = VW < 480, sh2 = compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
+  if(B.mp && !B.over) button('chat', VW - 52, vy + 18, 48, 16, G.chatOpen ? '닫기' : '말하기', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
+  if(B.mp && G.chatOpen && !B.over){ const cw = Math.min(64, Math.floor((VW - 12) / 4) - 4), cx0 = Math.round((VW - (cw + 4) * 4 + 4) / 2); QCHAT.forEach((t, i) => button('qc' + i, cx0 + (i % 4) * (cw + 4), sy0 - 54 + Math.floor(i / 4) * 24, cw, 21, t, null, () => { mpSay(i); G.chatOpen = false; }, { small: true, kind: 'blue' })); }
   g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
   T('체력', 8, sy0 + 5, { f: 's', c: COL.dim }); bar(36, sy0 + 7, 120, 7, PL.hp / PL.max, PL.hp < PL.max * .35 ? '#ff5a3a' : '#4ab04a'); T(Math.ceil(PL.hp) + '/' + PL.max, 96, sy0 + 6, { f: 's', a: 'c', c: '#ffffff', ol: COL.ink });
   T('필살', 8, sy0 + 22, { f: 's', c: full ? COL.gold : COL.dim }); bar(36, sy0 + 25, 120, 6, B.fev / 100, full ? (Math.sin(G.t * 10) > 0 ? '#ffe070' : '#ff9a3a') : '#c8902a');
@@ -3010,12 +3092,13 @@ function survResult(){
 const enOrder = (a, b) => (b.ed || 0) - (a.ed || 0) || b.es - a.es || a.et - b.et; // endless board: highest floor, then score, then the quicker run
 function enResult(){
   enRecord();
-  const o = B.over, best = S.eb || { s: 0 };
+  const o = B.over, psz = B.mp ? clamp(B.mpSize || B.mpMax || 1, 1, MP_MAX) : 1, best = (psz > 1 ? (S.ebp || {})[psz] : S.eb) || { s: 0 };
   const lines = [['도달', B.n + '층', '#ffd27a'], ['점수', fmt(B.score) + '점', COL.gold], ['걸린 시간', fmtT(B.t), COL.text], ['처치', fmt(B.runKills) + '마리', COL.text], ['카드', (B.lv - 1) + '장', '#8ad8ff'], ['특성', ENT[B.tr][0], COL.ember], ['번 골드', '+' + fmt(B.gold) + ' G', COL.gold]];
   if(B.shards) lines.push(['파편', '+' + B.shards, COL.text]);
   if(B.kits) lines.push(['강화 꾸러미', B.kits + '개 (가호 포함 강화 ' + B.kits + '번 값)', '#ffd27a']);
   for(const r of rwLines(B.rw)) lines.push(['보상', r, COL.ember]);
-  if(RK.erows && RK.uid){ const rs = RK.erows.slice().sort(enOrder), me = rs.findIndex(r => r.id === RK.uid); if(me >= 0) lines.push(['랭킹', me + 1 + '등 / ' + rs.length + '명', '#ffd27a']); }
+  if(B.mp) lines.push(['파티', clamp(B.mpSize || B.mpMax || 1, 1, MP_MAX) + '인' + (Object.keys(B.mpWith || {}).length ? ' · ' + Object.values(B.mpWith).slice(0, 3).join(', ') : ''), '#8ad8ff']);
+  else if(RK.erows && RK.uid){ const rs = RK.erows.slice().sort(enOrder), me = rs.findIndex(r => r.id === RK.uid); if(me >= 0) lines.push(['랭킹', me + 1 + '등 / ' + rs.length + '명', '#ffd27a']); }
   lines.push(['내 최고', (best.d || 0) + '층 · ' + fmt(best.s) + '점 · ' + fmtT(best.t || 0), COL.dim]);
   { const L2 = fitLines(lines, Math.floor((480 - 40 - 110) / 14)); lines.length = 0; lines.push(...L2); }
   const w = 236, h = 110 + lines.length * 14, x = (VW - w) / 2, y = Math.max(30, Math.min(80, Math.round((480 - h) / 2)));
@@ -3670,11 +3753,14 @@ function drawRank(){
       button('rks_set', 198, 384, 68, 18, '코드 바꾸기', null, setRoom, { small: true });
       T(RK.status === 'loading' ? '불러오는 중...' : etab ? '층수 순' : '최고 강화 순', VW - 8, 33, { f: 's', a: 'r', c: COL.dim }); }
     else T(RK.status === 'loading' ? '불러오는 중...' : (RK.writable === false ? '보기 전용' : etab ? '층수 순' : '최고 강화 순'), VW - 8, 33, { f: 's', a: 'r', c: RK.writable === false ? COL.bad : COL.dim });
-    const st = G.scroll.rank, top = 50, h = 330, rowH = 36;
-    const rows = etab ? (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder) : RK.rows;
+    const psz = etab ? (G.rankSize || 1) : 1;
+    if(etab){ for(let k = 1; k <= MP_MAX; k++){ const on = psz === k, bx = 4 + (k - 1) * 44; button('rsz' + k, bx, 48, 42, 15, k === 1 ? '솔로' : k + '인', null, () => { G.rankSize = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: on ? 'gold' : 'normal' }); } }
+    if(psz > 1) partyPull(psz);
+    const st = G.scroll.rank, top = etab ? 66 : 50, h = etab ? 314 : 330, rowH = 36;
+    const rows = !etab ? RK.rows : psz > 1 ? ((RK.pb || {})[psz] || []).slice().sort(enOrder) : (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder);
     scrollArea(st, 0, top, VW, h, rows.length * rowH + 4);
     g.save(); g.beginPath(); g.rect(0, top, VW, h); g.clip();
-    if(!rows.length) T('아직 아무도 기록을 올리지 않았다.', 135, top + 20, { f: 's', a: 'c', c: COL.faint });
+    if(!rows.length) T(psz > 1 && RK.noParty ? '파티 랭킹 저장소가 아직 없다 (선생님 설정 필요)' : psz > 1 ? '아직 ' + psz + '인 기록이 없다. 같이 하기로 도전해 보자.' : '아직 아무도 기록을 올리지 않았다.', 135, top + 20, { f: 's', a: 'c', c: COL.faint });
     rows.forEach((r, i) => {
       const y = top + 2 + i * rowH - Math.round(st.y); if(y > top + h || y + rowH < top) return;
       const me = r.id === RK.uid;
@@ -3691,6 +3777,7 @@ function drawRank(){
       const nw = T(r.name, 74, y + 3, { f: 'b', c: COL.text });
       if(r.title) T(r.title, 78 + nw, y + 5, { f: 's', c: COL.ember });
       const wc = glowOf(wid, G.t) || COL.text;
+      if(psz > 1 && r.pw){ T('함께: ' + r.pw, 74, y + 19, { f: 's', c: '#8ad8ff' }); T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); return; }
       const ww = T(etab && !wok ? '무기 기록 없음' : '+' + wL + ' ' + (wok && (etab || WEP[wid].L === r.best) ? wName(wid) : r.best >= 10 ? '(무기 고르는 중)' : ''), 74, y + 19, { f: 's', c: etab && !wok ? COL.faint : wc });
       if(etab){ T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); T(fmt(r.es) + '점 · ' + fmtT(r.et), 260, y + 20, { f: 's', a: 'r', c: COL.dim }); return; }
       const bw = T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
@@ -3706,7 +3793,7 @@ function drawRank(){
   }
   panel(4, 406, 262, 26, 'slot');
   T('내 기록', 12, 413, { f: 's', c: COL.dim });
-  { const cb = clearedBest(), eb = S.eb || { s: 0 }; T(etab ? (eb.s ? (WEP[eb.w] ? '+' + WEP[eb.w].L + ' ' + wName(eb.w) + ' · ' : '') + (eb.d || 0) + '층 · ' + fmt(eb.s) + '점' : '아직 도전 기록이 없다') : '최고 +' + S.best + '  ·  최고 스테이지 ' + (cb.s ? DIFF[cb.d][0] + ' ' + stLabel(cb.s) : '-'), 258, 413, { f: 's', a: 'r', c: COL.text }); }
+  { const cb = clearedBest(), eb = (etab && (G.rankSize || 1) > 1 ? (S.ebp || {})[G.rankSize] : S.eb) || { s: 0 }; T(etab ? (eb.s ? (WEP[eb.w] ? '+' + WEP[eb.w].L + ' ' + wName(eb.w) + ' · ' : '') + (eb.d || 0) + '층 · ' + fmt(eb.s) + '점' : '아직 도전 기록이 없다') : '최고 +' + S.best + '  ·  최고 스테이지 ' + (cb.s ? DIFF[cb.d][0] + ' ' + stLabel(cb.s) : '-'), 258, 413, { f: 's', a: 'r', c: COL.text }); }
 }
 
 // ---------------- modals ----------------
@@ -3847,7 +3934,7 @@ function drawModal(){
     sec('속성 각인', '#8ad8ff'); p('+5, +15, +25에 1·2·3차 칸이 열린다. 보스가 떨구는 각인석으로 새긴다. 각인석의 속성은 정해져 나온다. 2차는 귀하고 3차는 전설급이다. 새길 수 있으면 대장간 오른쪽 위 「각인」 버튼이 반짝인다. 칸의 「새기기」를 누르면 맞는 각인석이 빛난다.');
     sec('사냥터'); p('끌어서 이동, 무기는 알아서 휘두른다. 구르기는 버튼·두 번 톡·스페이스, 또는 이동하는 손가락은 그대로 두고 다른 손가락으로 화면을 톡. 스테이지를 깰 때마다 카드를 고른다. F 필살기, E 보스 우선 공격 켜기/끄기, Esc 일시정지.'); p('몬스터를 한 방에 크게 넘치게 잡으면(압도 ▶▶) 스테이지가 훨씬 빨리 끝난다. 보스는 가끔 가호 III·IV나 내구도 보수권을 떨군다.', COL.dim);
     sec('무한 도전', '#ffd27a'); p('특성 하나를 들고 끝없이 올라간다. 층마다 몬스터가 단단해지고 많아진다. 카드는 5층마다 나오는 보스에게서만 얻는다. 점수와 시간은 랭킹에 남는다.');
-    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 방 번호를 고르면 같은 반(그룹) 코드·같은 방 친구(최대 4명)와 한 전장에서 같은 몬스터를 함께 잡는다. 몬스터는 가까운 사람을 노리고, 인원이 많을수록 단단하고 많아진다. 같이 하기는 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 골드와 랭킹 기록은 없다.');
+    sec('같이 하기', COL.dim); p('무한 도전에서 「같이 하기」 → 방 번호를 고르면 같은 반(그룹) 코드·같은 방 친구(최대 4명)와 한 전장에서 같은 몬스터를 함께 잡는다. 몬스터는 가까운 사람을 노리고, 인원이 많을수록 단단하고 많아진다. 같이 하기는 시간이 멈추지 않는다(카드 고를 때만 잠깐 안전). 골드는 없고, 기록은 랭킹의 인원별(2인~6인) 탭에 남는다.');
     sec('버벅일 때', COL.dim); p('설정(또는 전투 일시정지)의 「그래픽」을 보통·낮음으로 내리면 이펙트가 줄고 훨씬 부드러워진다. 「자동」은 버벅이면 알아서 낮춘다. 데미지 숫자·몬스터 테두리도 따로 끌 수 있다.');
     sec('단축키', COL.dim); p('대장간: 스페이스 강화 · S 판매 · G 가호 · B 축복 · R 보수 · V 보관함 · E 각인 / 전투: 방향키·WASD 이동 · 스페이스 구르기 · F 필살기 · E 보스 우선 · Esc 일시정지', COL.dim);
     const top = 40, hh = 380, scr = G.scroll.help || (G.scroll.help = { y: 0 }), total = rows.reduce((a, r) => a + r.h, 0);
@@ -3878,12 +3965,24 @@ function drawModal(){
       button('enMp', 176, 404, 82, 32, '같이 하기', S.room ? RW() + ' ' + S.room : RW() + ' 코드 필요', () => { if(!S.room){ toast('먼저 ' + RW() + ' 코드를 정해라'); setRoom(); return; } G.modal = { k: 'party', tk: m.sel }; }, { kind: 'blue' });
     } else button('enGo', 12, 404, 246, 32, '도전 시작', ENT[m.sel][0], () => { const k = m.sel; G.modal = null; startEndless(k); }, { kind: 'gold', subc: '#4a2a02' });
     button('enNo', 12, 440, 246, 26, '돌아가기', null, () => { G.modal = null; }, { small: true });
-  } else if(m.k === 'party'){ // together: pick a room (1-6) inside the class code; up to 4 in a room
-    const { x, y } = mwin(236, 250, '같이 하기');
-    wrap(RW() + ' 「' + S.room + '」 안에서 방을 고른다. 같은 방 번호를 고른 친구(최대 ' + MP_MAX + '명)와 몬스터를 함께 잡는다.', 's', 208).forEach((ln, i) => T(ln, x + 14, y + 40 + i * 11, { f: 's', c: COL.dim }));
-    for(let i = 0; i < 6; i++){ const bx = x + 14 + (i % 3) * 70, by = y + 84 + Math.floor(i / 3) * 44; button('pty' + i, bx, by, 64, 38, (i + 1) + '번 방', null, () => mpJoin(m.tk, i + 1), { kind: 'blue' }); }
-    T('혼자보다 몬스터가 단단하고 많다. 골드는 없다.', VW / 2, y + 180, { f: 's', a: 'c', c: COL.faint });
-    button('ptyx', x + 14, y + 206, 208, 28, MP.joining ? '들어가는 중...' : '돌아가기', null, () => { if(!MP.joining) G.modal = { k: 'entrait', sel: m.tk }; }, { small: true });
+  } else if(m.k === 'party'){ // together: party size (2~6), then a room (1~6) inside the class code
+    const { x, y } = mwin(236, 286, '같이 하기'), sz = G.mpSize || 2;
+    wrap('몇 명이서 할지 고르고 방 번호를 누른다. 같은 인원·같은 방을 고른 친구가 다 모이면 다 같이 출발한다.', 's', 208).forEach((ln, i) => T(ln, x + 14, y + 38 + i * 11, { f: 's', c: COL.dim }));
+    T('인원', x + 14, y + 76, { f: 's', c: COL.text });
+    for(let k = 2; k <= MP_MAX; k++) button('psz' + k, x + 44 + (k - 2) * 36, y + 72, 33, 20, k + '인', null, () => { G.mpSize = k; }, { small: true, kind: sz === k ? 'gold' : 'normal' });
+    for(let i = 0; i < 6; i++){ const bx = x + 14 + (i % 3) * 70, by = y + 102 + Math.floor(i / 3) * 44; button('pty' + i, bx, by, 64, 38, (i + 1) + '번 방', sz + '인', () => mpJoin(m.tk, i + 1, sz), { kind: 'blue' }); }
+    T(RW() + ' 「' + S.room + '」 · 인원이 많을수록 몬스터가 단단하다', VW / 2, y + 198, { f: 's', a: 'c', c: COL.faint });
+    T('골드 없음 · 기록은 랭킹의 ' + sz + '인 탭에', VW / 2, y + 211, { f: 's', a: 'c', c: COL.faint });
+    button('ptyx', x + 14, y + 242, 208, 28, MP.joining ? '들어가는 중...' : '돌아가기', null, () => { if(!MP.joining) G.modal = { k: 'entrait', sel: m.tk }; }, { small: true });
+  } else if(m.k === 'lobby'){ // waiting room: who's here, how many more
+    const L = MP.lobby; if(!L){ G.modal = null; return; }
+    const list = mpLobbyList(), { x, y } = mwin(236, 270, L.size + '인 · ' + L.party + '번 방');
+    T('모이는 중 ' + Math.min(list.length, L.size) + ' / ' + L.size, VW / 2, y + 40, { f: 'b', a: 'c', c: '#8ad8ff' });
+    for(let i = 0; i < L.size; i++){ const r = list[i], yy = y + 62 + i * 20; R(x + 14, yy, 208, 17, r ? '#1e2a34' : '#1a1410'); T(r ? r.nm + (i === 0 ? ' ★' : '') + (r.id === MP.me ? ' (나)' : '') : '기다리는 중' + '.'.repeat(1 + Math.floor(G.t * 2) % 3), x + 22, yy + 3, { f: 's', c: r ? (r.id === MP.me ? '#ffe070' : COL.text) : COL.faint }); }
+    T('다 모이면 바로 출발 · 일시정지 없음', VW / 2, y + 62 + L.size * 20 + 4, { f: 's', a: 'c', c: COL.faint });
+    [0, 6, 5, 7].forEach((qi, j) => button('lqc' + j, x + 14 + j * 53, y + 200, 49, 20, QCHAT[qi], null, () => mpSay(qi), { small: true, kind: 'blue' }));
+    { const c = (MP.chat || []).slice(-1)[0]; if(c && G.t - c.at < 6) T(c.nm.slice(0, 6) + ': ' + c.t, VW / 2, y + 186, { f: 's', a: 'c', c: c.id === MP.me ? '#ffe070' : COL.text }); }
+    button('lbyx', x + 14, y + 226, 208, 28, '나가기', null, () => mpLobbyLeave(), { small: true, kind: 'danger' });
   } else if(m.k === 'vault'){
     const n = S.vcap, h = 118 + n * 46;
     const { x, y } = mwin(250, h, '무기 보관함', COL.gold);
@@ -4155,7 +4254,7 @@ addEventListener('keydown', e => {
   const kk = keyOf(e), act = e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter';
   if(G.scr === 'battle' && B && B.surv && (e.key === 'Escape' || kk === 'p')){ svPause(); return; }
   if(G.scr === 'battle' && B && B.surv && !e.repeat && kk === 'e'){ toggleBossT(); return; }
-  if(e.key === 'Escape'){ if(G.modal && !['destroy', 'job', 'ench', 'inherit'].includes(G.modal.k)) G.modal = null; return; }
+  if(e.key === 'Escape'){ if(G.modal && !['destroy', 'job', 'ench', 'inherit', 'lobby'].includes(G.modal.k)) G.modal = null; return; }
   if(G.scr === 'title'){ if(act){ e.preventDefault(); enterGame(); } return; }
   if(G.scr === 'battle' && B && B.surv){ KEYS[kk] = true; if(e.key.startsWith('Arrow')) e.preventDefault(); if(kk === 'f') svFever(); if(act){ e.preventDefault(); if(!e.repeat) svDash(); } return; }
   if(G.scr === 'battle') return;
@@ -4206,6 +4305,7 @@ function dmgNext(){ const order = ['all', 'crit', 'off'], i = order.indexOf(dmgM
 function loop(now){
   const raw = now - lastT, dt = Math.min(.05, Math.max(0, raw / 1000)); lastT = now; G.t += dt;
   if(G.scr === 'battle' && B && !B.paused && !B.pick && !B.over) autoGfx(raw);
+  if(MP.lobby) mpLobbyTick(dt);
   G.shake = REDUCED || S.opts.noShake || !GQ() ? 0 : Math.max(0, G.shake - dt * 18);
   const battle = G.scr === 'battle';
   VW = battle ? FW : 270; VH = battle ? FH : 480;

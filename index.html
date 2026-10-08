@@ -2195,14 +2195,16 @@ function drawChatWheel(){
   if(w.sel >= 0){ const a = w.sel / n * Math.PI * 2 - Math.PI / 2; for(let r = 6; r < RR - 14; r += 3) P(w.x + Math.cos(a) * r * RX / RR, w.y + Math.sin(a) * r, '#ffe070'); }
   T('V를 떼면 말한다', w.x, w.y + RR + 12, { f: 's', a: 'c', c: COL.dim, ol: COL.ink });
 }
-function mpSay(i){ if(!MP.ch || !QCHAT[i] || G.t - (MP.chatT || -9) < 1.2) return; MP.chatT = G.t; mpSend('c', { i, nm: S.name }); mpChat({ id: MP.me, i, nm: S.name }); }
+// chat flood guard: up to 5 lines in any 5 seconds (so a quick back-and-forth works), at least 0.3 s apart
+function chatAllow(){ const now = performance.now() / 1000; MP.chatTs = (MP.chatTs || []).filter(t => now - t < 5); if(MP.chatTs.length >= 5 || now - (MP.chatTs[MP.chatTs.length - 1] || -9) < .3) return false; MP.chatTs.push(now); return true; }
+function mpSay(i){ if(!MP.ch || !QCHAT[i]) return; if(!chatAllow()){ toast('조금 천천히'); return; } mpSend('c', { i, nm: S.name }); mpChat({ id: MP.me, i, nm: S.name }); }
 // free typing too: 30 characters, one line every 1.5 s, the word filter on both ends (a filtered line is never shown)
 const chatClean = t => String(t || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
-function mpSayText(t){
-  t = chatClean(t); if(!t || !MP.ch) return;
-  if(badName(t)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있다'); return; }
-  if(G.t - (MP.chatT || -9) < 1.5){ toast('조금 천천히'); return; }
-  MP.chatT = G.t; mpSend('c', { t, nm: S.name }); mpChat({ id: MP.me, t, nm: S.name });
+function mpSayText(t){ // true when it went out (the box keeps the text otherwise)
+  t = chatClean(t); if(!t || !MP.ch) return true;
+  if(badName(t)){ SFX.deny(); toast('쓸 수 없는 말이 들어 있다'); return false; }
+  if(!chatAllow()){ toast('조금 천천히 (5초에 5번까지)'); return false; }
+  mpSend('c', { t, nm: S.name }); mpChat({ id: MP.me, t, nm: S.name }); return true;
 }
 function chatInput(){ // a plain one-line box over the canvas (16px text so phones don't zoom in)
   const old = document.getElementById('chatbox'); if(old){ old.remove(); return; }
@@ -2210,7 +2212,7 @@ function chatInput(){ // a plain one-line box over the canvas (16px text so phon
   const inp = document.createElement('input'); inp.maxLength = 30; inp.placeholder = '할 말 (30자)'; inp.enterKeyHint = 'send'; inp.autocomplete = 'off';
   inp.style.cssText = 'flex:1;min-width:0;font:16px sans-serif;padding:8px;border:1px solid #6e4c32;border-radius:4px;background:#120b08;color:#efe2c8';
   const btn = (label, fn, main) => { const x = document.createElement('button'); x.textContent = label; x.style.cssText = 'padding:8px 12px;border:0;border-radius:4px;font:bold 15px sans-serif;background:' + (main ? '#e0782e;color:#2a0e02' : '#4a3a2e;color:#efe2c8'); x.onclick = fn; d.appendChild(x); };
-  const send = () => { if(!d.isConnected) return; const v = inp.value; d.remove(); mpSayText(v); try{ cv.focus(); }catch(e){} };
+  const send = () => { if(!d.isConnected) return; if(!mpSayText(inp.value)){ inp.focus(); return; } d.remove(); try{ cv.focus(); }catch(e){} };
   d.appendChild(inp); btn('보내기', send, true); btn('닫기', () => d.remove());
   let pend = false; // Enter pressed while the IME still holds the last syllable: send once it lands
   inp.addEventListener('compositionend', () => { if(pend){ pend = false; setTimeout(send, 0); } });
@@ -2220,7 +2222,7 @@ function chatInput(){ // a plain one-line box over the canvas (16px text so phon
 function mpChat(p){
   if(!p) return; const t = p.t != null ? chatClean(p.t) : QCHAT[p.i]; if(!t || badName(t)) return;
   const nm = p.id === MP.me ? S.name : badName(p.nm) ? '친구' : String(p.nm || '친구').slice(0, 8);
-  MP.chat = (MP.chat || []).concat([{ id: p.id, nm, t, at: G.t + (t.length > 12 ? 1.5 : 0) }]).slice(-4); if(p.id !== MP.me) SFX.blip(); }
+  MP.chat = (MP.chat || []).concat([{ id: p.id, nm, t, at: G.t + (t.length > 12 ? 1.5 : 0) }]).slice(-6); if(p.id !== MP.me) SFX.blip(); }
 function mpLeave(){ MP.lobby = null; if(MP.ch && MP.cli){ try{ MP.cli.removeChannel(MP.ch); }catch(e){} } MP.ch = null; MP.on = false; MP.peers = {}; MP.host = false; MP.hits = []; MP.hurts = []; }
 function mpSend(ev, p){ if(MP.ch) try{ MP.ch.send({ type: 'broadcast', event: ev, payload: Object.assign({ id: MP.me }, p) }); }catch(e){} }
 function mpRecv(p){

@@ -3470,6 +3470,7 @@ function drawShop(){
     const gRow = (i, t) => shopRow(i, 'shield', GH[t] + ' (보유 ' + S.gh[t] + ')', GH_BAND[t] + (t === 3 ? ' · 한 번에 1~5개. 보스도 가끔 준다.' : ' · 한 번에 1~10개씩 쓴다.'), fmtK(PRICE['g' + t]) + ' G', '구매', () => buy('g' + t), S.gold < PRICE['g' + t], [() => buy('g' + t, 5), S.gold < PRICE['g' + t] * 5]);
     gRow(0, 1); gRow(1, 2); gRow(2, 3);
     shopRow(3, 'shield', GH[4] + ' (보유 ' + S.gh[4] + ')', GH_BAND[4] + ' · 팔지 않는다. 무한 도전 깊은 층 보스만 드물게 준다.', '드롭 전용', '구매', () => {}, true);
+    if(!(G.t - (G.shopSeenT || -9) < .3) || G.blB !== band(S.lv)){ G.blT = band(S.lv); G.blB = band(S.lv); } G.shopSeenT = G.t; /* opening the shop, or the sword changing band, shows the blessing it needs now (a level picked earlier used to stick) */
     const bt = G.blT || band(S.lv), bk = 'bl' + bt; G.blT = bt; hit('blcyc', 4, 54 + 4 * 46, 150, 44, () => { SFX.click(); G.blT = bt % 4 + 1; });
     shopRow(4, 'bless', BLN[bt] + ' (보유 ' + S.bls[bt] + ') ▸', GH_BAND[bt].replace('+5', '+0') + ' · 성공률↑ · 눌러서 단계 바꾸기', fmtK(PRICE[bk]) + ' G', '구매', () => buy(bk), S.gold < PRICE[bk], [() => buy(bk, 5), S.gold < PRICE[bk] * 5]);
     shopRow(5, 'anvil', '내구도 보수권 (보유 ' + S.rp + ')', '균열을 메운다. 높은 단계일수록 많이 든다. 보스가 가끔 준다.', fmt(PRICE.rp) + ' G', '구매', () => buy('rp'), S.gold < PRICE.rp, [() => buy('rp', 5), S.gold < PRICE.rp * 5]);

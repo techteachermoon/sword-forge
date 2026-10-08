@@ -1145,20 +1145,19 @@ const sellP = L => L < 1 ? 0 : Math.round((L <= 30 ? BUILD[L] : BUILD[30] * Math
 const band = L => L < 15 ? 1 : L < 25 ? 2 : L < 30 ? 3 : 4;
 const BAND_START = [0, 5, 15, 25, 30];
 // 가호: spent before the hammer falls (it only matters from +5). Inside a band each level asks for one more:
-// +5 one, +6 two ... +14 ten; +15 one ... +24 ten; +25 one ... +29 five. 가호 IV is never sold: one per swing, from bosses only.
+// (tickets are gone: 가호 is paid in gold per swing, see GUARD_K)
 const gTier = L => L < 5 ? 0 : band(L);
-const gNeed = L => { const t = gTier(L); return !t ? 0 : t === 4 ? 1 : L - BAND_START[t] + 1; };
 const GH = ['', '가호 I', '가호 II', '가호 III', '가호 IV'];
 const GH_BAND = ['', '+5~+14', '+15~+24', '+25~+29', '+30~+34'];
 // 축복 comes in four grades like 가호 (one per band), priced so a high swing's 축복 is a real choice, not loose change
 const BLN = ['', '축복 I', '축복 II', '축복 III', '축복 IV'];
-const blNeed = L => [0, 1, 2, 3, 4][band(L)];
-const blHave = L => S.bls[band(L)] || 0;
-// 내구도 보수권: cheap in band I, then it climbs steeply: II 2~4, III 8~16, IV 30 tickets a repair
-const repairNeed = L => { const b = band(L); return b === 1 ? 1 : b === 2 ? 2 + Math.floor((L - 15) / 4) : b === 3 ? 6 + (L - 24) * 2 : 30; };
+// 가호·축복·보수 are paid in gold on the spot (no tickets to buy): a share of this level's 강화비.
+// 가호 ×0.5 (+5~+14), ×1 (+15~+24), ×2 (+25~+29), ×3 (+30~); 축복 ×0.4; 보수 ×0.6 for each crack
+const GUARD_K = L => L < 5 ? 0 : L < 15 ? .5 : L < 25 ? 1 : L < 30 ? 2 : 3;
 // +0 → +20 climbs a steady ×1.12 a level (83 → 800, ~10× in all, it used to be 200×), then ×1.075 a level above +20.
 const ATK = L => Math.round(800 * Math.pow(L <= 20 ? 1.12 : 1.075, L - 20));
-const PRICE = { g1: 30, g2: 800, g3: 300000, bl1: 30, bl2: 1500, bl3: 25000, bl4: 100000, rp: 5000, wp: 6000 }; // 가호 IV is not for sale
+const PRICE = { wp: 6000 };
+const OLD_PRICE = { g: [0, 30, 800, 300000, 1000000], bl: [0, 30, 1500, 25000, 100000], rp: 5000 }; // what the old tickets were worth, for the refund
 const gradeBonus = (base, gr) => gr === 'PERFECT' ? Math.round(Math.min(4, Math.max(.3, base * .25)) * 10) / 10 : gr === 'GOOD' ? Math.round(Math.min(1.5, Math.max(.2, base * .1)) * 10) / 10 : 0;
 const blessBonus = base => Math.round(Math.min(8, Math.max(.5, base * .3)) * 10) / 10;
 // stages: 1..18, three per area (the 3rd is the boss). Recommended sword level keeps the old +0..+29 curve: +0, +2, +4 / +5, +7, +9 ...
@@ -1175,7 +1174,7 @@ function josa(w, a, b){ const c = w.charCodeAt(w.length - 1); if(c >= 0xAC00 && 
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
 // ---------------- state ----------------
-const fresh = () => ({ v: 5, name: '', title: '', room: '', gold: 1500, lv: 0, tk: 0, gh: [0, 3, 0, 0, 0], rp: 1, crack: 0, vault: [], vcap: 2, eb: { s: 0, t: 0, d: 0 }, wp: 0, bl: 2, sh: 0, st: 0, best: 0,
+const fresh = () => ({ v: 6, name: '', title: '', room: '', gold: 1500, lv: 0, tk: 0, gh: [0, 0, 0, 0, 0], rp: 0, crack: 0, vault: [], vcap: 2, eb: { s: 0, t: 0, d: 0 }, wp: 0, bl: 0, sh: 0, st: 0, best: 0,
   tries: 0, succ: 0, destroyed: 0, saved: 0, spent: 0, earned: 0, sold: 0, found: { 'c:0': 1 }, line: 'c', lbest: {}, bestId: 'c:0', ench: {}, enchPend: 0, adv: 0, enchSeen: 0, perfect: 0, good: 0, miss: 0,
   failStreak: 0, maxFailStreak: 0, kills: 0, bosses: 0, prog: {}, engr: {}, eng: [], est: {}, ach: {}, daily: null,
   opts: { bgm: true, sfx: true, fast: false, bless: false, guard: true, mode: 'surv', diff: 'normal' }, tut: 0, sell20: 0, miracle: 0, warpOK: 0, log: [] });
@@ -1229,7 +1228,12 @@ function migrate(){ // v2 kept found as an array of levels; v3 keys it by weapon
   S.crack = Math.max(0, Math.floor(+S.crack || 0)); S.rp = Math.max(0, Math.floor(+S.rp || 0));
   if(!Array.isArray(S.bls)){ S.bls = [0, Math.max(0, Math.floor(+S.bl || 0)), 0, 0, 0]; } // one old kind of 축복 → 축복 I
   while(S.bls.length < 5) S.bls.push(0); S.bls.length = 5; S.bls = S.bls.map(n => Math.max(0, Math.floor(+n || 0))); delete S.bl;
-  S.v = 5;
+  if(S.v < 6){ // v5 → v6: 가호·축복·보수권 tickets are gone (paid in gold at the forge now). Whatever was left is paid back at shop price.
+    const g = S.gh.reduce((a, n, t) => a + n * OLD_PRICE.g[t], 0) + S.bls.reduce((a, n, t) => a + n * OLD_PRICE.bl[t], 0) + S.rp * OLD_PRICE.rp;
+    if(g > 0){ S.gold += g; S.refund6 = g; }
+  }
+  S.gh = [0, 0, 0, 0, 0]; S.bls = [0, 0, 0, 0, 0]; S.rp = 0;
+  S.v = 6;
 }
 function registerFound(id){ if(S.found[id]) return false; S.found[id] = 1; G.codexNew = true; return true; }
 function noteBest(){
@@ -1325,12 +1329,10 @@ const dailyBase = () => clamp(Math.max(S.lv, S.best - 4), 3, 29);
 function dailyReward(m){
   const kind = DKIND[m.k].rw, b = dailyBase();
   if(kind === 'gold') return { kind, n: Math.max(800, r5(cost(b) * 30)) };
-  if(kind === 'rp') return { kind, n: repairNeed(b) + 1 };
-  if(kind === 'tk'){ const t = clamp(gTier(b), 1, 2), per = gTier(b) === t ? gNeed(b) : 10; return { kind, n: per * (m.k === 'boss' ? 2 : 1), tier: t }; } // III/IV only from bosses
-  if(kind === 'bl'){ const t = Math.min(3, band(b)); return { kind, n: 2 * blNeed(b), tier: t }; }
-  return { kind, n: 1 };
+  return { kind: 'gold', n: Math.max(800, r5(cost(b) * (m.k === 'boss' ? 40 : 30))) }; // 가호·축복·보수 are paid in gold now, so every mission pays gold
 }
-const rwText = r => r.kind === 'gold' ? '골드 ' + fmt(r.n) : r.kind === 'tk' ? GH[r.tier] + ' ' + r.n + '개' : r.kind === 'rp' ? '내구도 보수권 ' + r.n + '장' : BLN[r.tier || 1] + ' ' + r.n + '장';
+const rwText = r => '골드 ' + fmt(r.n);
+const dailyBonus = () => Math.max(1000, r5(cost(dailyBase()) * 40)); // all three done
 function track(k, amt = 1, val){
   if(!S.daily) return;
   for(const m of S.daily.ms){ if(m.k !== k || m.done) continue; if(k === 'reach' || k === 'climb') m.p = Math.max(m.p, val || 0); else m.p += amt; }
@@ -1341,11 +1343,8 @@ function claimDaily(i){
   const m = S.daily.ms[i]; if(!m || m.done || m.p < m.n) return;
   m.done = true; const r = dailyReward(m);
   if(r.kind === 'gold'){ S.gold += r.n; SFX.coin(); toast(`+${fmt(r.n)} G`); }
-  if(r.kind === 'tk'){ S.gh[r.tier] += r.n; SFX.buy(); toast(GH[r.tier] + ' +' + r.n); }
-  if(r.kind === 'bl'){ S.bls[r.tier || 1] += r.n; SFX.buy(); toast(BLN[r.tier || 1] + ' +' + r.n); }
-  if(r.kind === 'rp'){ S.rp += r.n; SFX.buy(); toast('내구도 보수권 +' + r.n); }
-  if(S.daily.ms.every(q => q.done) && !S.daily.bonus){ // all three: a 가호 for the sword you're on
-    S.daily.bonus = 1; const b = dailyBase(), t = clamp(gTier(b), 1, 2), n = gTier(b) === t ? gNeed(b) : 10; S.gh[t] += n; banner('ach', '오늘의 의뢰 완료', GH[t] + ' +' + n);
+  if(S.daily.ms.every(q => q.done) && !S.daily.bonus){ // all three: a bonus
+    S.daily.bonus = 1; const n = dailyBonus(); S.gold += n; banner('ach', '오늘의 의뢰 완료', '보너스 +' + fmt(n) + ' G');
   }
   save(); checkAch();
 }
@@ -1463,11 +1462,15 @@ const RAR = { C: ['일반', '#9aa4b4'], R: ['희귀', '#5a9aff'], L: ['전설', 
 const en = k => (S.ench && S.ench[k]) || 0;
 const enchKeys = () => Object.keys(S.ench || {}).filter(k => ENCH[k] && S.ench[k] > 0);
 const costNow = L => r5(cost(L) * (1 - .1 * en('thrift')));
+const guardCost = L => GUARD_K(L) ? r5(costNow(L) * GUARD_K(L)) : 0;
+const blessCost = L => r5(costNow(L) * .4);
+const repairCost = L => r5(costNow(L) * .6 * Math.max(1, crackN()));
 const sellNow = L => L < 1 ? 0 : Math.round(sellP(L) * (1 + .2 * en('merchant')) / 10) * 10;
 // the odds of the next swing. grade = PERFECT/GOOD bonus once it is known. Bless and 가호 count only if they would really be spent.
-const useGuard = L => gTier(L) > 0 && S.opts.guard && guardHave(L) >= gNeed(L);
-const guardHave = L => { const t = gTier(L); return t ? S.gh[t] : 0; };
-const useBless = L => S.opts.bless && blHave(L) >= blNeed(L);
+// a switch counts only if the gold is there for it, after the 강화비 (가호 first, then 축복)
+const useGuard = L => gTier(L) > 0 && S.opts.guard && S.gold >= costNow(L) + guardCost(L);
+const useBless = L => S.opts.bless && S.gold >= costNow(L) + (useGuard(L) ? guardCost(L) : 0) + blessCost(L);
+const swingCost = L => costNow(L) + (useGuard(L) ? guardCost(L) : 0) + (useBless(L) ? blessCost(L) : 0);
 function odds(L, gradeB = 0, bOn = useBless(L), gOn = useGuard(L)){
   const base = rate(L), b = bOn ? blessBonus(base) : 0;
   const mul = (1 + en('luck') * .03) * Math.min(1.15, 1 + en('adversity') * .01 * (S.adv || 0)); // together at most ×1.25
@@ -1527,16 +1530,20 @@ function startForge(){
   if(G.reveal) G.reveal = null;
   if(!canForge()) return;
   const L = S.lv, c = costNow(L);
-  // hammering bare where 가호 would help: show the real risk first (once per level)
-  // ask on a new situation only: the first bare swing here, a new 가호 tier, 가호 running short, or climbing a level while short.
-  // Two swings in a row at the same level never ask twice. Leaving the forge resets it.
-  const gShort = guardHave(L) < gNeed(L), w = F.warnOk;
-  if(unprotShare(L) > 0 && !useGuard(L) && (!w || w.t !== gTier(L) || (gShort && (!w.short || w.L < L)))){ G.modal = { k: 'noguard', L }; SFX.deny(); return; }
   if(S.gold < c){ SFX.deny(); toast('골드가 부족합니다'); say(pick(LINES.poor)); return; }
-  S.gold -= c; S.spent += c; S.tries++; track('forge', 1); gainSxp(1);
-  F.bless = false; F.guard = false;
-  if(useBless(L)){ S.bls[band(L)] -= blNeed(L); F.bless = true; }
-  if(useGuard(L)){ S.gh[gTier(L)] -= gNeed(L); F.guard = true; }
+  const g = useGuard(L), b = useBless(L);
+  // about to hammer without 가호 where it matters. Two clear rules:
+  //  · the switch is ON but the gold can't cover it → ask every time (it would silently fall away otherwise)
+  //  · the switch is OFF → ask once; after "그래도" it stays quiet until the switch is touched or the sword enters a new band
+  if(unprotShare(L) > 0 && !g){
+    if(S.opts.guard){ if(!F.bareOnce){ G.modal = { k: 'noguard', L, why: 'gold' }; SFX.deny(); return; } }
+    else if(S.opts.bareOk !== band(L)){ G.modal = { k: 'noguard', L, why: 'off' }; SFX.deny(); return; }
+  }
+  F.bareOnce = false;
+  const pay = c + (g ? guardCost(L) : 0) + (b ? blessCost(L) : 0);
+  S.gold -= pay; S.spent += pay; S.tries++; track('forge', 1); gainSxp(1);
+  F.bless = b; F.guard = g;
+  if(S.opts.bless && !b) toast('골드가 모자라 축복 없이 두들긴다');
   F.lastL = L; F.lastId = curId(); F.grade = null;
   if(S.opts.fast){ F.grade = 'AUTO'; F.st = 'swing'; F.at = 0; }
   else { F.st = 'gauge'; F.gp = Math.random() < .5 ? 0 : 1; F.gdir = F.gp ? -1 : 1; F.at = 0; }
@@ -1637,7 +1644,7 @@ function resolveForge(){
         log(`+${L} 파괴 → 가호가 막음`);
       } else {
         SFX.keep(); G.shake = 2; G.swShake = .5; ribbon('keep', '강화 실패', '검은 무사하다 · 균열 ' + crackN(), 1.6); burst(SC.cx, pos.y + 4, 22, ['#8a8a92', '#5e5e66', '#b8b8c0'], 40, .9, -30);
-        say(F.grade === 'MISS' ? '박자 놓쳤다. 망치가 헛돌았어.' : S.crack >= 4 && L >= 10 ? '금이 많이 갔다. 보수권으로 손 좀 봐라.' : pick(LINES.keep));
+        say(F.grade === 'MISS' ? '박자 놓쳤다. 망치가 헛돌았어.' : S.crack >= 4 && L >= 10 ? '금이 많이 갔다. 「보수」로 손 좀 봐라.' : pick(LINES.keep));
         log(`+${L} 실패 (유지)`);
       }
       F.st = 'idle';
@@ -1660,13 +1667,15 @@ function destroyChoose(){
 }
 const crackN = () => Math.floor(S.crack || 0);
 // 내구도 보수: clears the cracks on this sword
+function toggleGuard(){ S.opts.guard = !S.opts.guard; S.opts.bareOk = 0; save(); } // touching the switch: the "no 가호" question comes back
+function toggleBless(){ S.opts.bless = !S.opts.bless; save(); }
 function repair(){
-  const L = S.lv, n = repairNeed(L);
+  const L = S.lv, pr = repairCost(L);
   if(F.st !== 'idle' || G.modal || crackN() < 1) return;
-  if(S.rp < n){ SFX.deny(); toast('내구도 보수권이 ' + n + '장 필요하다'); return; }
-  S.rp -= n; S.crack = 0; SFX.clang(.8); G.flash = .2; G.flashC = '#8ad8ff';
+  if(S.gold < pr){ SFX.deny(); toast('보수비 ' + fmt(pr) + ' G가 필요하다'); return; }
+  S.gold -= pr; S.spent += pr; S.crack = 0; SFX.clang(.8); G.flash = .2; G.flashC = '#8ad8ff';
   const pos = swordPos(curId()); sparks(SC.cx, pos.y + 4, 16);
-  say('금 간 데를 메웠다. 이제 좀 덜 불안하군.'); log(`+${L} 내구도 보수 (보수권 ${n}장)`); save();
+  say('금 간 데를 메웠다. 이제 좀 덜 불안하군.'); log(`+${L} 보수 (${fmt(pr)} G)`); save();
 }
 function sellSword(){
   const L = S.lv; if(F.st !== 'idle' || G.modal || L < 1) return;
@@ -1701,8 +1710,7 @@ function buy(k, n = 1){
   const pr = (k === 'vc' ? vaultPrice() : PRICE[k]) * n; if(!pr) return;
   if(S.gold < pr){ SFX.deny(); toast('골드가 부족합니다'); return; }
   S.gold -= pr;
-  if(k === 'g1') S.gh[1] += n; if(k === 'g2') S.gh[2] += n; if(k === 'g3') S.gh[3] += n;
-  if(k === 'wp') S.wp += n; if(/^bl[1-4]$/.test(k)) S.bls[+k[2]] += n; if(k === 'rp') S.rp += n; if(k === 'vc') S.vcap++;
+  if(k === 'wp') S.wp += n; if(k === 'vc') S.vcap++;
   SFX.buy(); toast('구매 완료'); save();
 }
 // ---------------- weapon vault: park a sword (with its enchants, engravings and cracks) and forge a new one ----------------
@@ -1755,16 +1763,17 @@ function engrave(i, k){
   save();
 }
 // drop table: p = [tier I, tier II, tier III] chances. The best tier that hits wins; the element is random and fixed.
-// rare boss loot: a repair kit for your sword, 가호 III (rare), 가호 IV (very rare, deep endless floors and the hell dragon only)
+// rare boss loot (gold now): a small chest, a big one (rare), a legendary one (very rare, deep endless floors and the hell dragon only)
 // tuned on bot runs: about 20 endless bosses an hour → III ≈ one per 2~3 one-hour runs, IV ≈ one per ~15 hours
 const lootP = o => o.en != null
   ? { rp: .08, g3: o.en >= 15 ? Math.min(.03, .012 + (o.en - 15) * .0004) : 0, g4: o.en >= 30 ? Math.min(.015, .005 + (o.en - 30) * .0003) : 0 }
   : { rp: .05 + DORD.indexOf(o.d) * .02, g3: o.ai >= 4 ? [0, .004, .008, .016][DORD.indexOf(o.d)] : 0, g4: o.ai >= 5 && o.d === 'hell' ? .004 : 0 };
 function bossLoot(o){
   const p = lootP(o), got = [];
-  if(Math.random() < p.g4){ S.gh[4]++; got.push(['가호 IV', 3]); }
-  else if(Math.random() < p.g3){ S.gh[3]++; got.push(['가호 III', 2]); }
-  if(Math.random() < p.rp){ const n = repairNeed(Math.max(5, S.lv)); S.rp += n; got.push(['내구도 보수권 ' + n + '장', 1]); }
+  const c = cost(clamp(Math.max(S.lv, S.best - 3), 10, 30)), chest = (k, nm, t) => { const n = r5(c * k); S.gold += n; S.earned += n; if(B) B.gold += n; got.push([nm + ' +' + fmtK(n) + ' G', t]); };
+  if(Math.random() < p.g4) chest(20, '전설의 보물상자', 3);
+  else if(Math.random() < p.g3) chest(8, '귀한 보물상자', 2);
+  if(Math.random() < p.rp) chest(3, '보스의 보물상자', 1);
   for(const [nm, t] of got){
     if(B){ B.rw = B.rw || []; B.rw.push(nm); B.nums.push({ x: B.P.x, y: B.P.y - 72, v: nm + '!', crit: true, t: -.3, c: t === 3 ? '#ffd27a' : t === 2 ? '#c58bff' : '#8ad8ff', big: true }); }
     banner('ach', t === 3 ? '전설의 보물!' : t === 2 ? '귀한 보물!' : '보스의 선물', nm);
@@ -1793,9 +1802,7 @@ function huntStoneP(ai, diff){
 }
 const enStoneP = n => [Math.min(.5, .1 + n * .006), n >= 20 ? Math.min(.08, (n - 20) * .0015) : 0, n >= 50 ? Math.min(.02, (n - 50) * .0004) : 0];
 function craft(k){
-  if(k === 'tk' && S.sh >= 15){ S.sh -= 15; S.gh[1] += 2; }
-  else if(k === 'tk2' && S.sh >= 40){ S.sh -= 40; S.gh[2]++; }
-  else if(k === 'tk3' && S.sh >= 150 && S.st >= 5){ S.sh -= 150; S.st -= 5; S.gh[3]++; }
+  if(k === 'sell' && S.sh >= 10){ const n = r5(cost(clamp(S.lv, 5, 30)) * 1.5); S.sh -= 10; S.gold += n; S.earned += n; toast('+' + fmt(n) + ' G'); }
   else if(k === 'wp' && S.sh >= 40 && S.st >= 1){ S.sh -= 40; S.st--; S.wp++; }
   else if(k === 'c10' && S.sh >= 120 && S.lv === 0){ S.sh -= 120; S.lv = 10; S.line = 'g'; if(registerFound('g:10')) banner('codex', '도감 등록', wName('g:10')); noteBest(); G.tab = 'forge'; bigText('+10', '제작 완료', '#8a6cff'); }
   else if(k === 'c12' && S.st >= 6 && S.lv === 0){ S.st -= 6; S.lv = 12; S.line = 'c'; noteBest(); G.tab = 'forge'; bigText('+12', '제작 완료', '#ffd36b'); }
@@ -2035,9 +2042,9 @@ function enStageClear(){
   const bonus = B.mp ? 0 : Math.round(enKillGold() * (wasBoss ? 200 : 40)); S.gold += bonus; S.earned += bonus; B.gold += bonus;
   if(wasBoss){ S.bosses++; track('boss', 1); const sh = 2 + Math.floor(n / 10); S.sh += sh; B.shards += sh; stoneDrop(enStoneP(n));
     if(!B.mp) bossLoot({ en: n });
-    if(n % 10 === 0 && !B.mp){ // a forging kit from the boss on every 10th floor: one swing's gold (+ one swing's 가호 I/II)
-      const L = S.lv, t = gTier(L), c = cost(L), gk = t && t <= 2 ? gNeed(L) : 0;
-      S.gold += c; S.earned += c; B.gold += c; if(gk) S.gh[t] += gk; // III/IV and repair tickets now come from boss drops only
+    if(n % 10 === 0 && !B.mp){ // a forging kit from the boss on every 10th floor: one swing's gold with 가호
+      const L = S.lv, c = cost(L) + guardCost(L); // one swing with 가호
+      S.gold += c; S.earned += c; B.gold += c;
       B.kits = (B.kits || 0) + 1; B.nums.push({ x: B.P.x, y: B.P.y - 60, v: '강화 꾸러미!', crit: true, t: -.4, c: '#ffd27a', big: true });
     } }
   SFX.win(); G.shake = Math.max(G.shake, 5); B.clearFx = 0;
@@ -2449,7 +2456,7 @@ function svStageClear(){
   if(!hardOpen && diffOpen('hard')){ B.rw.push('어려움 난이도 열림'); banner('ach', '새 난이도', '어려움이 열렸다'); }
   if(!hellOpen && diffOpen('hell')){ B.rw.push('지옥 난이도 열림'); banner('ach', '새 난이도', '지옥이 열렸다'); }
   if(B.boss){ stoneDrop(huntStoneP(B.ai, B.diff)); bossLoot({ ai: B.ai, d: B.diff }); }
-  if(B.boss){ S.bosses++; track('boss', 1); if(first){ const di = Math.max(0, DORD.indexOf(B.diff) - 1), tier = clamp(Math.ceil((B.ai + 1) / 2) + (di ? 1 : 0), 1, 3), n = tier === 3 ? 1 : 2 + di; S.gh[tier] += n; B.rw.push(GH[tier] + ' +' + n); S.rp += 1 + di; B.rw.push('보수권 +' + (1 + di)); if(B.ai >= 3 || di){ S.st += 1 + di; B.rw.push('별조각 +' + (1 + di)); } } }
+  if(B.boss){ S.bosses++; track('boss', 1); if(first){ const di = Math.max(0, DORD.indexOf(B.diff) - 1), tier = clamp(Math.ceil((B.ai + 1) / 2) + (di ? 1 : 0), 1, 3), n = tier === 3 ? 1 : 2 + di; { const gg = r5(cost(stRec(s)) * (6 + tier * 4) * n); S.gold += gg; S.earned += gg; B.gold += gg; B.rw.push('첫 보스 보상 +' + fmtK(gg) + ' G'); } if(B.ai >= 3 || di){ S.st += 1 + di; B.rw.push('별조각 +' + (1 + di)); } } }
   B.cleared++; SFX.win(); G.shake = Math.max(G.shake, 5); B.clearFx = 0;
   B.clearing = true; B.feverLock = true; // everything on screen pops, without filling the special gauge
   try{ for(const o of B.mons.slice()) if(o.die === 0 && o.kind !== 'boss'){ o.hp = 0; o.die = .001; svKill(o); } } finally { B.clearing = false; B.feverLock = false; }
@@ -2965,7 +2972,7 @@ function survDraw(dt){
   if(B.banner && !B.paused && !B.pick){ const bn = B.banner; bn.t += dt; if(bn.t > 2) B.banner = null; else { const a = bn.t < .2 ? bn.t / .2 : bn.t > 1.6 ? (2 - bn.t) / .4 : 1; g.globalAlpha = a; T(bn.text, VW / 2, vy + 60 - (bn.t < .1 ? (1 - bn.t * 10) * 10 : 0), { f: 'b', z: 3, a: 'c', c: bn.warn || B.boss ? '#ff5a4a' : '#ffd27a', ol: COL.ink }); T(bn.sub, VW / 2, vy + 102, { f: 'b', a: 'c', c: COL.text, ol: COL.ink }); g.globalAlpha = 1; } }
   if(B.over && B.over.t > .35){ dim(0, 0, VW, VH, .35); centered(survResult); }
 }
-function rwLines(rw){ // '가호 II +3' ×3 → '가호 II +9'; other repeats → '× n'
+function rwLines(rw){ // '별조각 +2' ×3 → '별조각 +6'; other repeats → '× n'
   const m = new Map(); for(const r of rw || []){ const mt = /^(.*) \+(\d+)$/.exec(r), k = mt ? mt[1] : r, e = m.get(k) || { n: 0, plus: !!mt }; e.n += mt ? +mt[2] : 1; m.set(k, e); }
   return [...m].map(([k, e]) => e.plus ? k + ' +' + e.n : e.n > 1 ? k + ' ×' + e.n : k);
 }
@@ -2992,7 +2999,7 @@ function enResult(){
   const o = B.over, best = S.eb || { s: 0 };
   const lines = [['도달', B.n + '층', '#ffd27a'], ['점수', fmt(B.score) + '점', COL.gold], ['걸린 시간', fmtT(B.t), COL.text], ['처치', fmt(B.runKills) + '마리', COL.text], ['카드', (B.lv - 1) + '장', '#8ad8ff'], ['특성', ENT[B.tr][0], COL.ember], ['번 골드', '+' + fmt(B.gold) + ' G', COL.gold]];
   if(B.shards) lines.push(['파편', '+' + B.shards, COL.text]);
-  if(B.kits){ const t = gTier(S.lv); lines.push(['강화 꾸러미', B.kits + '개' + (t && t <= 2 ? ' (' + GH[t] + ' ' + B.kits * gNeed(S.lv) + ')' : ''), '#ffd27a']); }
+  if(B.kits) lines.push(['강화 꾸러미', B.kits + '개 (가호 포함 강화 ' + B.kits + '번 값)', '#ffd27a']);
   for(const r of rwLines(B.rw)) lines.push(['보상', r, COL.ember]);
   if(RK.erows && RK.uid){ const rs = RK.erows.slice().sort(enOrder), me = rs.findIndex(r => r.id === RK.uid); if(me >= 0) lines.push(['랭킹', me + 1 + '등 / ' + rs.length + '명', '#ffd27a']); }
   lines.push(['내 최고', (best.d || 0) + '층 · ' + fmt(best.s) + '점 · ' + fmtT(best.t || 0), COL.dim]);
@@ -3127,7 +3134,7 @@ function drawHUD(){
   hit('gear', VW - 22, 0, 22, 25, () => { SFX.click(); G.modal = { k: 'settings' }; });
   let gx = VW - 24; const gw = T(fmt(S.gold), gx, 1, { f: 'b', c: COL.gold, a: 'r' }); ic('coin', gx - gw - 11, 3);
   let x = VW - 24;
-  for(const [k, v] of [['star', S.st], ['shard', S.sh], ['bless', S.bls[band(S.lv)]], ['warp', S.wp], ['shield', S.gh[Math.max(1, gTier(S.lv))]]]){ const w = T(String(v), x, 14, { f: 's', c: COL.text, a: 'r' }); x -= w + 10; ic(k, x, 15); x -= 4; }
+  for(const [k, v] of [['star', S.st], ['shard', S.sh], ['warp', S.wp]]){ const w = T(String(v), x, 14, { f: 's', c: COL.text, a: 'r' }); x -= w + 10; ic(k, x, 15); x -= 4; }
   if(G.scr === 'game') hit('invhud', x - 2, 12, VW - 22 - x + 2, 14, () => { if(F.st !== 'idle' && F.st !== 'broken') return; SFX.click(); G.modal = { k: 'inv' }; G.scroll.inv = { y: 0 }; }); // tap the pouch row: everything you carry
 }
 const TABS = [['forge', '대장간', 'anvil'], ['hunt', '사냥터', 'swords'], ['shop', '상점', 'bag'], ['quest', '의뢰', 'scroll'], ['codex', '도감', 'book'], ['rank', '랭킹', 'trophy']];
@@ -3367,27 +3374,27 @@ function drawForgeInfo(){
   const idle = F.st === 'idle' && !G.modal;
   if(S.inhPend || S.enchPend > 0) button('forge', 8, 360, 180, 42, S.inhPend ? '인챈트 계승' : '인챈트 고르기', '', () => { if(S.inhPend) G.modal = { k: 'inherit', sel: [] }; else openEnch(); }, { kind: 'gold', dis: !idle });
   else if(needsJob()) button('forge', 8, 360, 180, 42, '무기 고르기', '+' + (needsJob() === 1 ? 10 : 20) + ' 갈림길', () => { G.modal = { k: 'job', tier: needsJob() }; }, { kind: 'gold', dis: !idle });
-  else button('forge', 8, 360, 180, 42, L < MAX ? '강화하기' : '최대 강화', L < MAX ? fmt(costNow(L)) + ' G' : '', startForge, { kind: 'primary', dis: L >= MAX || !idle });
+  else button('forge', 8, 360, 180, 42, L < MAX ? '강화하기' : '최대 강화', L < MAX ? fmt(swingCost(L)) + ' G' : '', startForge, { kind: 'primary', dis: L >= MAX || !idle });
   button('sell', 194, 360, 68, 42, F.sellArm > 0 ? '정말?' : '판매', L > 0 ? '+' + fmtK(sellNow(L)) : '-', sellSword, { kind: F.sellArm > 0 ? 'gold' : 'normal', dis: L < 1 || !idle, subc: COL.gold });
   // three switches under the buttons: 가호 (this level's tier), 축복 (scrolls per swing), 내구도 보수
   const tier = gTier(L), gOn = useGuard(L), bOn = useBless(L);
-  const tog = (id, x, w, on, avail, label, sub, fn) => {
+  const tog = (id, x, w, on, avail, label, sub, fn, warn) => {
     const pr = pressedOn(id), by = 406;
     R(x, by, w, 26, COL.ink); R(x + 1, by + 1, w - 2, 24, on ? '#3a3010' : '#1e1612'); if(on) R(x + 1, by + 1, w - 2, 1, COL.gold);
     R(x + 4, by + 8 + (pr ? 1 : 0), 9, 9, COL.ink); R(x + 5, by + 9 + (pr ? 1 : 0), 7, 7, on ? COL.gold : '#3a2e26');
     if(on){ P(x + 6, by + 12, COL.ink); P(x + 7, by + 13, COL.ink); P(x + 8, by + 12, COL.ink); P(x + 9, by + 11, COL.ink); P(x + 10, by + 10, COL.ink); }
     T(label, x + 16, by + 2, { f: 's', c: on ? COL.gold : avail ? COL.text : COL.faint });
-    T(sub, x + 16, by + 13, { f: 's', c: on ? COL.text : COL.faint });
+    T(sub, x + 16, by + 13, { f: 's', c: warn ? COL.bad : on ? COL.text : COL.faint });
     hit(id, x, by, w, 26, () => { if(F.st !== 'idle') return; SFX.click(); fn(); });
   };
-  if(tier){ const gn = gNeed(L), ok = guardHave(L) >= gn; tog('guard', 8, 84, gOn, ok, GH[tier] + ' ' + guardHave(L), ok ? '한 번에 ' + gn + '개' : gn + '개 필요' + (tier === 4 ? ' · 드롭' : ''), () => { if(!ok){ if(tier < 4) G.tab = 'shop'; else toast('가호 IV는 무한 도전 깊은 층 보스만 준다'); return; } S.opts.guard = !S.opts.guard; save(); }); }
+  if(tier){ const gc = guardCost(L), short = S.opts.guard && !gOn; tog('guard', 8, 84, S.opts.guard, true, '가호 ' + (S.opts.guard ? '켜짐' : '꺼짐'), short ? '골드 부족' : '+' + fmtK(gc) + ' G', () => toggleGuard(), short); }
   else { R(8, 406, 84, 26, '#140e0b'); T('가호', 14, 408, { f: 's', c: COL.faint }); T('+5부터 필요', 14, 419, { f: 's', c: COL.faint }); }
-  tog('bless', 96, 84, bOn, blHave(L) >= blNeed(L), BLN[band(L)] + ' ' + blHave(L), '한 번에 ' + blNeed(L) + '장', () => { if(blHave(L) < blNeed(L)){ S.opts.bless = false; toast(BLN[band(L)] + '가 ' + blNeed(L) + '장 필요하다'); return; } S.opts.bless = !S.opts.bless; save(); });
-  { const n = repairNeed(L), can = ck > 0 && S.rp >= n, pr = pressedOn('repair'), x = 184, by = 406;
+  { const short = S.opts.bless && !bOn; tog('bless', 96, 84, S.opts.bless, true, '축복 ' + (S.opts.bless ? '켜짐' : '꺼짐'), short ? '골드 부족' : '+' + fmtK(blessCost(L)) + ' G', () => toggleBless(), short); }
+  { const rc = repairCost(L), can = ck > 0 && S.gold >= rc, pr = pressedOn('repair'), x = 184, by = 406;
     R(x, by, 78, 26, COL.ink); R(x + 1, by + 1 + (pr ? 1 : 0), 76, 24, can ? '#1e3a4a' : '#1e1612');
-    T('내구도 보수 (' + S.rp + ')', x + 39, by + 2, { f: 's', a: 'c', c: can ? '#bfe8ff' : COL.faint });
-    T(ck ? '균열 ' + ck + ' · ' + n + '장' : '균열 없음', x + 39, by + 13, { f: 's', a: 'c', c: can ? COL.text : COL.faint });
-    hit('repair', x, by, 78, 26, () => { SFX.click(); if(ck && S.rp < n){ G.tab = 'shop'; toast('보수권은 상점에서 판다'); return; } repair(); }); }
+    T(ck ? '보수 · 균열 ' + ck : '보수', x + 39, by + 2, { f: 's', a: 'c', c: can ? '#bfe8ff' : COL.faint });
+    T(ck ? fmtK(rc) + ' G' : '균열 없음', x + 39, by + 13, { f: 's', a: 'c', c: ck && !can ? COL.bad : can ? COL.text : COL.faint });
+    hit('repair', x, by, 78, 26, () => { SFX.click(); repair(); }); }
 }
 function drawForgeBtns(){ // small signboards on the right wall: vault, engraving, the sword's numbers
   if(G.reveal || G.rib || F.st === 'gauge' || F.st === 'swing') return; // keep the success moment clean
@@ -3470,24 +3477,16 @@ function drawShop(){
   R(0, 26, VW, 408, '#140d0a');
   tabs2('stab', 6, 30, [['shop', '상점'], ['craft', '조합소']], G.shopTab, k => G.shopTab = k);
   if(G.shopTab === 'shop'){
-    const gRow = (i, t) => shopRow(i, 'shield', GH[t] + ' (보유 ' + S.gh[t] + ')', GH_BAND[t] + (t === 3 ? ' · 한 번에 1~5개. 보스도 가끔 준다.' : ' · 한 번에 1~10개씩 쓴다.'), fmtK(PRICE['g' + t]) + ' G', '구매', () => buy('g' + t), S.gold < PRICE['g' + t], [() => buy('g' + t, 5), S.gold < PRICE['g' + t] * 5]);
-    gRow(0, 1); gRow(1, 2); gRow(2, 3);
-    shopRow(3, 'shield', GH[4] + ' (보유 ' + S.gh[4] + ')', GH_BAND[4] + ' · 팔지 않는다. 무한 도전 깊은 층 보스만 드물게 준다.', '드롭 전용', '구매', () => {}, true);
-    if(!(G.t - (G.shopSeenT || -9) < .3) || G.blB !== band(S.lv)){ G.blT = band(S.lv); G.blB = band(S.lv); } G.shopSeenT = G.t; /* opening the shop, or the sword changing band, shows the blessing it needs now (a level picked earlier used to stick) */
-    const bt = G.blT || band(S.lv), bk = 'bl' + bt; G.blT = bt; hit('blcyc', 4, 54 + 4 * 46, 150, 44, () => { SFX.click(); G.blT = bt % 4 + 1; });
-    shopRow(4, 'bless', BLN[bt] + ' (보유 ' + S.bls[bt] + ') ▸', GH_BAND[bt].replace('+5', '+0') + ' · 성공률↑ · 눌러서 단계 바꾸기', fmtK(PRICE[bk]) + ' G', '구매', () => buy(bk), S.gold < PRICE[bk], [() => buy(bk, 5), S.gold < PRICE[bk] * 5]);
-    shopRow(5, 'anvil', '내구도 보수권 (보유 ' + S.rp + ')', '균열을 메운다. 높은 단계일수록 많이 든다. 보스가 가끔 준다.', fmt(PRICE.rp) + ' G', '구매', () => buy('rp'), S.gold < PRICE.rp, [() => buy('rp', 5), S.gold < PRICE.rp * 5]);
-    shopRow(6, 'warp', '워프권 (보유 ' + S.wp + ')', '+0일 때 「쓰기」를 누르면 50% 확률로 +12.', fmt(PRICE.wp) + ' G', '구매', () => buy('wp'), S.gold < PRICE.wp, [() => useWarp(), !(S.wp > 0 && S.lv === 0 && F.st === 'idle'), '쓰기']);
+    wrap('가호·축복·보수는 이제 대장간에서 스위치를 켜 두면 두들길 때 골드로 바로 낸다. 따로 살 필요 없다.', 's', 246).forEach((ln, i) => T(ln, 12, 64 + i * 12, { f: 's', c: COL.dim }));
+    shopRow(1, 'warp', '워프권 (보유 ' + S.wp + ')', '+0일 때 「쓰기」를 누르면 50% 확률로 +12.', fmt(PRICE.wp) + ' G', '구매', () => buy('wp'), S.gold < PRICE.wp, [() => useWarp(), !(S.wp > 0 && S.lv === 0 && F.st === 'idle'), '쓰기']);
     const vp = vaultPrice();
-    shopRow(7, 'bag', '보관함 칸 늘리기 (' + S.vcap + '칸)', vp ? '검을 하나 더 걸어 둘 수 있다.' : '더는 늘릴 수 없다.', vp ? fmtK(vp) + ' G' : '최대', '구매', () => buy('vc'), !vp || S.gold < vp);
+    shopRow(2, 'bag', '보관함 칸 늘리기 (' + S.vcap + '칸)', vp ? '검을 하나 더 걸어 둘 수 있다.' : '더는 늘릴 수 없다.', vp ? fmtK(vp) + ' G' : '최대', '구매', () => buy('vc'), !vp || S.gold < vp);
   } else {
-    shopRow(0, 'shield', '가호 I 두 개', '파편 15개를 녹여 가호 I 두 개를 만든다.', '파편 15', '제작', () => craft('tk'), S.sh < 15);
-    shopRow(1, 'shield', '가호 II', '파편 40개로 만든다.', '파편 40', '제작', () => craft('tk2'), S.sh < 40);
-    shopRow(2, 'shield', '가호 III', '파편 150개와 별조각 5개가 든다.', '파편 150 · 별 5', '제작', () => craft('tk3'), !(S.sh >= 150 && S.st >= 5));
-    shopRow(3, 'warp', '워프권 만들기', '파편 40개와 별조각 1개가 든다.', '파편 40 · 별 1', '제작', () => craft('wp'), !(S.sh >= 40 && S.st >= 1));
-    shopRow(4, 'shard', '흑요석 대검 (+10)', '+0일 때 파편 120개로 바로 만든다. 대검의 길로 간다.', '파편 120', '제작', () => craft('c10'), !(S.sh >= 120 && S.lv === 0));
-    shopRow(5, 'star', '+12 무기', '+0일 때 별조각 6개로 바로 만든다. 무기 종류는 고른다.', '별조각 6', '제작', () => craft('c12'), !(S.st >= 6 && S.lv === 0));
-    shopRow(6, 'shard', '속성 각인 (' + engrN() + '/' + engrOpen() + '칸)', '+5·+15·+25에 칸이 열린다. 보스가 떨구는 각인석이 든다.', '각인석 ' + (stoneTot(1) + stoneTot(2) + stoneTot(3)) + '개', '열기', () => { SFX.click(); G.modal = { k: 'engr' }; }, false);
+    shopRow(0, 'coin', '파편 팔기 (10개)', '쓸 곳 없는 파편을 골드로 바꾼다. 지금 검 강화비의 1.5배.', '파편 10', '판매', () => craft('sell'), S.sh < 10);
+    shopRow(1, 'warp', '워프권 만들기', '파편 40개와 별조각 1개가 든다.', '파편 40 · 별 1', '제작', () => craft('wp'), !(S.sh >= 40 && S.st >= 1));
+    shopRow(2, 'shard', '흑요석 대검 (+10)', '+0일 때 파편 120개로 바로 만든다. 대검의 길로 간다.', '파편 120', '제작', () => craft('c10'), !(S.sh >= 120 && S.lv === 0));
+    shopRow(3, 'star', '+12 무기', '+0일 때 별조각 6개로 바로 만든다. 무기 종류는 고른다.', '별조각 6', '제작', () => craft('c12'), !(S.st >= 6 && S.lv === 0));
+    shopRow(4, 'shard', '속성 각인 (' + engrN() + '/' + engrOpen() + '칸)', '+5·+15·+25에 칸이 열린다. 보스가 떨구는 각인석이 든다.', '각인석 ' + (stoneTot(1) + stoneTot(2) + stoneTot(3)) + '개', '열기', () => { SFX.click(); G.modal = { k: 'engr' }; }, false);
     const tip = wrap('파편: +5 이상 검이 부서질 때, 2지역부터 사냥터에서. 별조각: +15 이상 검이 부서질 때, 4지역부터 보스를 처음 잡을 때.', 's', 250);
     tip.forEach((ln, i) => T(ln, 10, 378 + i * 12, { f: 's', c: COL.faint }));
   }
@@ -3505,12 +3504,12 @@ function drawQuest(){
       panel(4, y, 262, 70, 'wood');
       T(DKIND[m.k].t(m.n), 14, y + 9, { f: 'b', c: m.done ? COL.faint : COL.text });
       const r = dailyReward(m);
-      ic(r.kind === 'gold' ? 'coin' : r.kind === 'tk' ? 'shield' : r.kind === 'rp' ? 'anvil' : 'bless', 14, y + 26); T('보상 ' + rwText(r), 26, y + 25, { f: 's', c: COL.gold });
+      ic('coin', 14, y + 26); T('보상 ' + rwText(r), 26, y + 25, { f: 's', c: COL.gold });
       bar(14, y + 46, 168, 8, m.p / m.n, m.p >= m.n ? '#4ab04a' : '#c8902a');
       T(Math.min(m.p, m.n) + ' / ' + m.n, 98, y + 45, { f: 's', a: 'c', c: '#fff', ol: COL.ink });
       button('dq' + i, 192, y + 36, 64, 24, m.done ? '받음' : '받기', null, () => claimDaily(i), { dis: m.done || m.p < m.n, kind: 'gold', small: true });
     });
-    { const all = S.daily.ms.every(q => q.done), b = dailyBase(), t = clamp(gTier(b), 1, 2), n = gTier(b) === t ? gNeed(b) : 10; T(all ? '오늘 의뢰 완료! 보너스 ' + GH[t] + ' 받음' : '셋 다 끝내면 보너스 ' + GH[t] + ' ' + n + '개', 135, 278, { f: 's', a: 'c', c: all ? COL.good : COL.gold }); }
+    { const all = S.daily.ms.every(q => q.done); T(all ? '오늘 의뢰 완료! 보너스 받음' : '셋 다 끝내면 보너스 ' + fmt(dailyBonus()) + ' G', 135, 278, { f: 's', a: 'c', c: all ? COL.good : COL.gold }); }
     T('의뢰는 매일 자정에 바뀐다.', 135, 292, { f: 's', a: 'c', c: COL.faint });
     T('업적을 달성하면 칭호를 얻는다. 칭호는 랭킹에도 보인다.', 135, 306, { f: 's', a: 'c', c: COL.faint });
   } else {
@@ -3823,7 +3822,7 @@ function drawModal(){
     const rows = [], sec = (t, c) => rows.push({ h: 18, d: y => { R(10, y + 14, 250, 1, '#5a3e2a'); T(t, 10, y + 2, { f: 'b', c: c || COL.ember }); } });
     const p = (t, c) => { const ls = wrap(t, 's', 240); rows.push({ h: ls.length * 11 + 4, d: y => ls.forEach((ln, i) => T(ln, 14, y + i * 11, { f: 's', c: c || COL.text })) }); };
     sec('강화'); p('강화하기를 누르고 게이지 가운데에서 누르면 PERFECT(성공률↑). +10, +20에서 무기 종류를 고른다.'); p('높을수록 성공률이 낮다. +29→+30은 3%, 최고는 +35.', COL.dim);
-    sec('파괴 · 가호 · 균열', COL.bad); p('+5부터 실패하면 부서질 수 있다. 「가호」를 켜 두면 두들기기 전에 쓰고, 실패해도 잘 안 부서진다. 가호 I(+5~+14), II(+15~+24), III(+25~+29), IV(+30~+34). 구간 안에서 한 단계 오를 때마다 한 번에 쓰는 개수가 1개씩 는다. III은 아주 비싸고, IV는 팔지 않는다(무한 도전 깊은 층 보스 드롭). 가호 없이 두들기면 실패의 상당수가 그대로 파괴로 이어진다.'); p('가호를 써도 낮은 확률(+0 0.1% → +20 3.5% → +29 9% → +34 11.5%)로는 부서진다. 실패할 때마다 칼날에 균열이 쌓여 이 확률이 오른다. 「내구도 보수권」으로 균열을 메운다.', COL.dim);
+    sec('파괴 · 가호 · 균열', COL.bad); p('+5부터 실패하면 부서질 수 있다. 대장간의 「가호」 스위치를 켜 두면 두들길 때마다 가호비(골드)를 내고, 실패해도 잘 안 부서진다. 가호비는 강화비의 0.5배(+5~+14), 1배(+15~+24), 2배(+25~+29), 3배(+30 이상). 가호 없이 두들기면 실패의 상당수가 그대로 파괴로 이어진다.'); p('「축복」 스위치는 강화비의 0.4배를 더 내고 성공 확률을 올린다. 가호를 써도 낮은 확률(+0 0.1% → +20 3.5% → +29 9% → +34 11.5%)로는 부서진다. 실패할 때마다 칼날에 균열이 쌓여 이 확률이 오른다. 「보수」를 누르면 골드를 내고 균열을 메운다(균열 하나에 강화비의 0.6배).', COL.dim);
     sec('축복 주문서'); p('켜 두면 성공률이 오른다. 높은 단계일수록 한 번에 여러 장 쓴다. 파괴 확률은 줄이지 못한다.');
     sec('보관함'); p('오른쪽 위 「보관함」. 아끼는 검을 걸어 두고 새 검을 두들길 수 있다. 꺼내면 인챈트·각인·균열이 그대로다.');
     sec('속성 각인', '#8ad8ff'); p('+5, +15, +25에 1·2·3차 칸이 열린다. 보스가 떨구는 각인석으로 새긴다. 각인석의 속성은 정해져 나온다. 2차는 귀하고 3차는 전설급이다. 새길 수 있으면 대장간 오른쪽 위 「각인」 버튼이 반짝인다. 칸의 「새기기」를 누르면 맞는 각인석이 빛난다.');
@@ -3918,14 +3917,14 @@ function drawModal(){
     let yy = top + 2 - Math.round(scr.y); for(const r of rows){ if(yy + r.h > top - 30 && yy < top + hh + 10) r.d(yy); yy += r.h; }
     g.restore(); scrollbar(scr, top, hh);
     button('specx', 12, top + hh + 8, 246, 26, '닫기', null, () => { G.modal = null; }, { kind: 'primary', small: true });
-  } else if(m.k === 'noguard'){
-    const L = m.L, t = gTier(L), bare = odds(L, 0, useBless(L), false).d, safe = odds(L, 0, useBless(L), true).d, ek = enchKeys().length;
+  } else if(m.k === 'noguard'){ // why: 'gold' (switch on, gold short) or 'off' (switch off)
+    const L = m.L, bare = odds(L, 0, useBless(L), false).d, safe = odds(L, 0, useBless(L), true).d, ek = enchKeys().length, gc = guardCost(L), need = costNow(L) + gc;
     const { x, y } = mwin(240, 222, '가호 없이?', COL.bad);
-    const gn = gNeed(L), enough = S.gh[t] >= gn;
-    const lines = [GH[t] + (enough ? '가 꺼져 있다.' : ' ' + gn + '개 필요 (보유 ' + S.gh[t] + ')'), '', '가호 없이 파괴 확률 ' + bare.toFixed(1) + '%', '가호를 쓰면 ' + safe.toFixed(2) + '%', '부서지면 +' + L + ' ' + wName(curId()) + ' 소멸'].concat(ek ? ['인챈트 ' + ek + '개도 함께 사라진다'] : []);
+    const lines = [m.why === 'gold' ? '가호비가 모자란다 (강화비 포함 ' + fmtK(need) + ' G 필요)' : '가호가 꺼져 있다. 켜면 +' + fmtK(gc) + ' G', '', '가호 없이 파괴 확률 ' + bare.toFixed(1) + '%', '가호를 쓰면 ' + safe.toFixed(2) + '%', '부서지면 +' + L + ' ' + wName(curId()) + ' 소멸'].concat(ek ? ['인챈트 ' + ek + '개도 함께 사라진다'] : []);
     lines.forEach((ln, i) => T(ln, VW / 2, y + 40 + i * 13, { f: 's', a: 'c', c: i === 2 ? COL.bad : i >= 2 ? COL.text : COL.dim }));
-    button('w25g', x + 12, y + 122, 216, 24, enough ? GH[t] + ' ' + gn + '개 쓰고 두들기기' : t === 4 ? '가호 IV는 보스 드롭으로만' : GH[t] + ' 사러 가기 (' + fmtK(PRICE['g' + t] * (gn - S.gh[t])) + ' G)', null, () => { G.modal = null; if(enough){ S.opts.guard = true; startForge(); } else if(t < 4) G.tab = 'shop'; }, { kind: 'blue', small: true, dis: !enough && t === 4 });
-    button('w25go', x + 12, y + 152, 216, 26, '그래도 맨손으로 두들긴다', null, () => { F.warnOk = { t: gTier(L), short: guardHave(L) < gNeed(L), L }; G.modal = null; startForge(); }, { kind: 'danger', small: true });
+    if(m.why === 'gold') button('w25g', x + 12, y + 122, 216, 24, '사냥터에서 골드 벌어 오기', null, () => { G.modal = null; G.tab = 'hunt'; }, { kind: 'blue', small: true });
+    else button('w25g', x + 12, y + 122, 216, 24, '가호 켜고 두들기기 (' + fmtK(need) + ' G)', null, () => { G.modal = null; S.opts.guard = true; S.opts.bareOk = 0; save(); startForge(); }, { kind: 'blue', small: true, dis: S.gold < need });
+    button('w25go', x + 12, y + 152, 216, 26, '그래도 가호 없이 두들긴다', null, () => { G.modal = null; if(m.why === 'gold') F.bareOnce = true; else { S.opts.bareOk = band(L); save(); } startForge(); }, { kind: 'danger', small: true });
     button('w25no', x + 12, y + 182, 216, 28, '그만두기', null, () => { G.modal = null; }, { small: true });
   } else if(m.k === 'engr'){
     // three slots on the sword, then the stone pouch: tap a stone to carve it into its tier's slot
@@ -3969,10 +3968,11 @@ function drawModal(){
     const head = t => rows.push({ h: 18, d: y => { R(16, y + 14, 238, 1, '#5a3e2a'); T(t, 16, y + 2, { f: 'b', c: COL.ember }); } });
     const item = (icon, name, n, note, c) => rows.push({ h: 24, d: y => { R(16, y, 238, 22, '#1a1410'); if(icon && ICON[icon]){ const sc = ICON[icon].width > 8 ? 1 : 2; ic(icon, 20 + (16 - ICON[icon].width * sc) / 2, y + 3 + (16 - ICON[icon].height * sc) / 2, sc); } T(name, 40, y + 2, { f: 's', c: c || COL.text }); if(note) T(note, 40, y + 12, { f: 's', c: COL.faint }); T(typeof n === 'number' ? fmt(n) : n, 250, y + 6, { f: 'b', a: 'r', c: COL.text }); } });
     head('재화'); item('coin', '골드', S.gold, '', COL.gold); item('shard', '검 파편', S.sh, '조합소 재료'); item('star', '별조각', S.st, '조합소 재료');
-    head('강화 소모품 · 지금 검 +' + L);
-    for(let t = 1; t <= 4; t++) item('shield', GH[t], S.gh[t], GH_BAND[t] + (gTier(L) === t ? ' · 지금 한 번에 ' + gNeed(L) + '개' : '') + (t === 4 ? ' · 보스 드롭' : ''), gTier(L) === t ? COL.gold : COL.text);
-    for(let t = 1; t <= 4; t++) item('bless', BLN[t], S.bls[t], GH_BAND[t].replace('+5', '+0') + (band(L) === t ? ' · 지금 한 번에 ' + blNeed(L) + '장' : ''), band(L) === t ? COL.gold : COL.text);
-    item('anvil', '내구도 보수권', S.rp, '지금 한 번 보수에 ' + repairNeed(L) + '장 · 균열 ' + crackN());
+    head('지금 검 +' + L + ' · 한 번에 드는 골드');
+    item('anvil', '강화비', fmt(costNow(L)) + ' G', '');
+    if(gTier(L)) item('shield', '가호비', fmt(guardCost(L)) + ' G', S.opts.guard ? '켜짐' : '꺼짐', S.opts.guard ? COL.gold : COL.text);
+    item('bless', '축복비', fmt(blessCost(L)) + ' G', S.opts.bless ? '켜짐' : '꺼짐', S.opts.bless ? COL.gold : COL.text);
+    item('anvil', '보수비', crackN() ? fmt(repairCost(L)) + ' G' : '-', '균열 ' + crackN());
     item('warp', '워프권', S.wp, '+0일 때 50% 확률로 +12');
     head('각인석');
     ELK.forEach(k => rows.push({ h: 22, d: y => { R(16, y, 238, 20, '#1a1410'); T(ELS[k][0], 22, y + 4, { f: 'b', c: ELS[k][1] }); for(let j = 0; j < 3; j++){ const n = stoneN(k, j + 1); T(TIER_N[j] + ' ' + (n || '-'), 120 + j * 46, y + 5, { f: 's', c: n ? TIER_C[j] : COL.faint }); } } }));
@@ -4057,8 +4057,9 @@ function enterGame(){
   inp.blur();
   G.scr = 'game'; titleRename = false; placeInput();
   audioInit(); playSong('forge', true);
-  if(!S.tut){ S.tut = 1; S.tut5 = 1; DLG.tut = false; say(['처음 보는 얼굴이군. 난 이 대장간 주인, 모팔모다.', josa(S.name, '이라고', '라고') + '? 좋아, 오늘부터 내 망치를 빌려주지.', '강화를 누르면 게이지가 움직인다. 가운데 하얀 칸에서 누르면 PERFECT.', '+5부터는 실패하면 검이 부서질 수 있다. 두들기기 전에 가호를 켜 두면 훨씬 덜 부서진다.', '돈이 떨어지면 사냥터에 다녀와라. 검이 강할수록 깊이 들어갈 수 있다.'], true, true); DLG.tut = true; }
-  else if(!S.tut5){ S.tut5 = 1; say(['대장간이 좀 바뀌었다. 잘 들어라.', '방지권은 이제 「가호」다. 두들기기 전에 하나씩 쓰고, 켜 두면 잘 안 부서진다.', '실패하면 칼날에 금이 간다. 균열이 쌓이면 부서지기 쉬우니 보수권으로 메워라.', '아끼는 검은 오른쪽 위 「보관함」에 걸어 두고 새 검을 두들겨도 된다.', '+5, +15, +25에 각인 칸이 열린다. 보스가 떨구는 각인석으로 새겨라.', '사냥터 맨 아래 「무한 도전」도 열었다. 어디까지 가나 보자.'], true, true); DLG.tut = true; }
+  if(!S.tut){ S.tut = 1; S.tut5 = 1; S.tut6 = 1; DLG.tut = false; say(['처음 보는 얼굴이군. 난 이 대장간 주인, 모팔모다.', josa(S.name, '이라고', '라고') + '? 좋아, 오늘부터 내 망치를 빌려주지.', '강화를 누르면 게이지가 움직인다. 가운데 하얀 칸에서 누르면 PERFECT.', '+5부터는 실패하면 검이 부서질 수 있다. 두들기기 전에 가호를 켜 두면 훨씬 덜 부서진다.', '돈이 떨어지면 사냥터에 다녀와라. 검이 강할수록 깊이 들어갈 수 있다.'], true, true); DLG.tut = true; }
+  else if(!S.tut5){ S.tut5 = 1; say(['대장간이 좀 바뀌었다. 잘 들어라.', '「가호」를 켜 두면 두들길 때 골드를 조금 더 내고, 잘 안 부서진다.', '실패하면 칼날에 금이 간다. 균열이 쌓이면 부서지기 쉬우니 「보수」로 메워라.', '아끼는 검은 오른쪽 위 「보관함」에 걸어 두고 새 검을 두들겨도 된다.', '+5, +15, +25에 각인 칸이 열린다. 보스가 떨구는 각인석으로 새겨라.', '사냥터 맨 아래 「무한 도전」도 열었다. 어디까지 가나 보자.'], true, true); DLG.tut = true; }
+  else if(!S.tut6){ S.tut6 = 1; S.tut5 = 1; say(['대장간 규칙을 바꿨다. 들어 봐라.', '가호·축복·보수권은 이제 사지 않는다. 아래 스위치를 켜 두면 두들길 때 골드로 바로 낸다.', '금이 가면 「보수」를 눌러라. 골드를 내면 메워 준다.'].concat(S.refund6 ? ['남아 있던 가호·축복·보수권은 골드로 바꿔 놨다. +' + fmt(S.refund6) + ' G'] : [])); S.refund6 = 0; }
   else say(pick(LINES.greet));
   save(); rankPush();
 }
@@ -4145,8 +4146,8 @@ addEventListener('keydown', e => {
     else if(kk === 's'){ sellSword(); }
     else if(F.st === 'idle' && !G.reveal){ // shortcuts: G 가호, B 축복, R 보수, V 보관함, E 각인
       const k = kk;
-      if(k === 'g'){ if(guardHave(S.lv) >= gNeed(S.lv)){ S.opts.guard = !S.opts.guard; SFX.click(); save(); } }
-      else if(k === 'b'){ if(blHave(S.lv) >= blNeed(S.lv)){ S.opts.bless = !S.opts.bless; SFX.click(); save(); } }
+      if(k === 'g'){ if(gTier(S.lv)){ toggleGuard(); SFX.click(); } }
+      else if(k === 'b'){ toggleBless(); SFX.click(); }
       else if(k === 'r') repair();
       else if(k === 'v') G.modal = { k: 'vault' };
       else if(k === 'e') G.modal = { k: 'engr' };
@@ -4184,7 +4185,6 @@ function gfxLabel(){ const v = S.opts.gfx; return v === 'low' || v === 'mid' || 
 function gfxNext(){ const order = ['auto', 'high', 'mid', 'low'], i = order.indexOf(S.opts.gfx || 'auto'); S.opts.gfx = order[(i + 1) % 4]; if(S.opts.gfx === 'auto') S.opts.autoQ = null; G.af = null; save(); fit(); }
 function dmgNext(){ const order = ['all', 'crit', 'off'], i = order.indexOf(dmgMode()); S.opts.dmgNum = order[(i + 1) % 3]; save(); }
 function loop(now){
-  if(F.warnOk && (G.scr !== 'game' || G.tab !== 'forge')) F.warnOk = null; // looked elsewhere: ask again next time
   const raw = now - lastT, dt = Math.min(.05, Math.max(0, raw / 1000)); lastT = now; G.t += dt;
   if(G.scr === 'battle' && B && !B.paused && !B.pick && !B.over) autoGfx(raw);
   G.shake = REDUCED || S.opts.noShake || !GQ() ? 0 : Math.max(0, G.shake - dt * 18);

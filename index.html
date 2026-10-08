@@ -2125,7 +2125,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 13; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 14; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2145,7 +2145,7 @@ async function mpJoin(tk, party, size){
   if(MP.joining) return; MP.joining = true; toast(size + '인 ' + party + '번 방에 들어가는 중...');
   try{
     await mpLoadLib();
-    if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { params: { eventsPerSecond: 20 } } });
+    if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { params: { eventsPerSecond: 40 } } });
     mpLeave();
     MP.me = Math.random().toString(36).slice(2, 10); MP.party = party;
     const ch = MP.cli.channel('sf-together-' + roomKey() + '-' + size + 'p-' + party, { config: { broadcast: { self: false } } });
@@ -2231,7 +2231,9 @@ function mpRecv(p){
   if(p.v !== MP_VER && !MP.verWarn){ MP.verWarn = 1; toast('게임 버전이 다른 친구가 있다. 모두 새로고침(F5) 해라'); }
   const o = MP.peers[p.id] || (MP.peers[p.id] = { dx: p.x, dy: p.y });
   if(o.seen != null && p.x != null){ const gap = Math.max(.05, G.t - o.seen); o.vx = clamp((p.x - o.x) / gap, -400, 400); o.vy = clamp((p.y - o.y) / gap, -400, 400); }
-  if(p.fx && B && B.mp && !MP.lobby) mpFxIn(Object.assign(o, { n: p.n, ln: p.ln }), p.fx);
+  o.rx = (o.rx || []).filter(t => G.t - t < 2); o.rx.push(G.t); // how many messages a second actually arrive (party panel dot)
+  // effects ride in two messages in a row (fx, and the previous message's as fx0): one lost message no longer loses them; a repeat is skipped
+  if(p.fs && B && B.mp && !MP.lobby){ const last = o.fs || 0; if(p.fs > last){ Object.assign(o, { n: p.n, ln: p.ln }); if(last && p.fs - last === 2 && p.fx0) mpFxIn(o, p.fx0); if(p.fx) mpFxIn(o, p.fx); o.fs = p.fs; } }
   Object.assign(o, { wid: p.wid, wc: p.wc, mv: p.mv, ob: p.ob || 0, au: p.au, shd: p.shd, st: p.st || 0, dm: p.dm || 0, id: p.id, nm: p.nm, ln: p.ln, x: p.x, y: p.y, f: p.f, hp: p.hp, n: p.n, dead: p.dead, t0: p.t0, seen: G.t });
   if(p.hits && MP.host && B && B.mp && p.n === B.n) mpApplyHits(p.id, p.hits);
 }
@@ -2351,14 +2353,14 @@ function mpTick(dt){
   }
   MP.sendT -= dt;
   if(MP.sendT <= 0){ MP.sendT = MP_DT;
-    const fx = mpFxOut();
-    if(MP.host) mpSend('w', Object.assign(mpSnap(), fx.length ? { fx } : {}));
-    else mpSend('p', Object.assign(mpMe(), MP.hits.length ? { hits: MP.hits.splice(0, 120) } : {}, fx.length ? { fx } : {})); }
+    const fx = mpFxOut(), fp = { fs: MP.fseq = (MP.fseq || 0) + 1, fx, fx0: MP.fxPrev || [] }; MP.fxPrev = fx;
+    if(MP.host) mpSend('w', Object.assign(mpSnap(), fp));
+    else mpSend('p', Object.assign(mpMe(), MP.hits.length ? { hits: MP.hits.splice(0, 120) } : {}, fp)); }
 }
 // 같이 하기 party panel: every member's health, what they are doing, and the damage they landed this run
 function drawDmgMeter(x, y){
   const rows = [{ nm: S.name, dm: B.dmgDone || 0, ln: B.line, hp: B.P.hp / B.P.max * 100, st: B.pick ? 1 : B.paused ? 2 : 0, dead: !!(B.over || B.dead), me: true, host: MP.host }]
-    .concat(Object.values(MP.peers).filter(o => G.t - o.seen < 5).map(o => ({ nm: badName(o.nm) ? '친구' : String(o.nm || '친구'), dm: o.dm || 0, ln: o.ln, hp: o.hp || 0, st: o.st || 0, dead: o.dead, far: o.n !== B.n, host: o.id === mpHostId() })));
+    .concat(Object.values(MP.peers).filter(o => G.t - o.seen < 5).map(o => ({ nm: badName(o.nm) ? '친구' : String(o.nm || '친구'), dm: o.dm || 0, ln: o.ln, hp: o.hp || 0, st: o.st || 0, dead: o.dead, far: o.n !== B.n, host: o.id === mpHostId(), rx: (o.rx || []).filter(t => G.t - t < 2).length / 2 })));
   rows.sort((a, b) => b.dm - a.dm);
   const tot = rows.reduce((a, r) => a + r.dm, 0) || 1, top = rows[0].dm || 1, w = 128;
   g.globalAlpha = .55; R(x - 2, y - 2, w + 4, rows.length * 12 + 13, '#000'); g.globalAlpha = 1;
@@ -2366,6 +2368,7 @@ function drawDmgMeter(x, y){
   rows.forEach((r, i) => { const yy = y + 10 + i * 12, c = (WL[r.ln] || WL.c).col;
     g.globalAlpha = r.dead ? .35 : .8; R(x, yy + 1, Math.max(1, Math.round(w * r.dm / top)), 10, mixc(c, '#000000', .5)); g.globalAlpha = 1;
     T(String(r.nm).slice(0, 5) + (r.host ? '★' : ''), x + 2, yy, { f: 's', c: r.dead ? COL.faint : r.me ? '#ffe070' : COL.text, ol: COL.ink });
+    if(!r.me){ const c2 = r.rx >= 7 ? '#4ab04a' : r.rx >= 4 ? '#e0b040' : '#e0483a'; R(x - 2, yy + 3, 3, 3, c2); } /* signal: green ~10 a second, yellow choppy, red barely */
     // health bar, or what they're up to
     const hx = x + 46;
     if(r.dead) T('쓰러짐', hx, yy, { f: 's', c: COL.bad, ol: COL.ink });

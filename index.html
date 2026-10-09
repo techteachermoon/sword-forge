@@ -1313,7 +1313,7 @@ function noteBest(){
   const l = lineOf(); S.lbest[l] = Math.max(S.lbest[l] || 0, S.lv);
   if(S.lv > 0){ if(!S.sid) S.sid = newSid(); const up = S.lv > (S.speak || 0); S.speak = Math.max(S.speak || 0, S.lv); if(up) swordSync(swordRec('alive')); } // the sword board
   if(needsJob()){ if(S.lv > S.best){ S.best = S.lv; rankPush(); } return; }
-  if(S.lv >= S.best){ const up = S.lv > S.best || S.bestId !== curId(); S.best = S.lv; S.bestId = curId(); S.binfo = curInfo(); if(up) rankPush(); }
+  if(S.lv >= S.best){ const up = S.lv > S.best || S.bestId !== curId(); S.best = S.lv; S.bestId = curId(); S.bestSid = S.sid; S.binfo = curInfo(); if(up) rankPush(); }
 }
 let dirty = false;
 function save(){ dirty = true; }
@@ -1969,7 +1969,7 @@ async function rankInit(){
   RK.status = 'loading';
   try{
     RK.unsub = db.collection('scores').orderBy('best', 'desc').limit(60).onSnapshot(snap => {
-      RK.rows = snap.docs.map(d => cleanRow(d.id, d.data())).filter(Boolean).sort((a, b) => b.best - a.best || DORD.indexOf(b.diff) - DORD.indexOf(a.diff) || b.stage - a.stage);
+      RK.rows = snap.docs.map(d => cleanRow(d.id, d.data())).filter(Boolean).sort((a, b) => b.best - a.best || b.bs - a.bs || DORD.indexOf(b.diff) - DORD.indexOf(a.diff) || b.stage - a.stage); // same level: the endless score made with that sword
       RK.status = 'ok';
     }, err => { RK.status = 'err'; });
     // the endless board is its own query: a top score may belong to someone with a modest sword
@@ -1979,6 +1979,7 @@ async function rankInit(){
   if(S.sid && (S.speak || 0) >= 10) swordSync(swordRec('alive'));
   (S.vault || []).forEach(pk => { if(pk.sid && (pk.speak || 0) >= 10) swordSync(packRec(pk, 'vault')); }); // older records learn their slots and enchants
   if(!S.binfo && S.lv >= S.best && S.bestId === curId()) S.binfo = curInfo();
+  if(!S.bestSid && S.lv >= S.best && S.bestId === curId()) S.bestSid = S.sid;
 }
 function cleanRow(id, d){
   if(!d || typeof d !== 'object') return null;
@@ -1992,7 +1993,7 @@ function cleanRow(id, d){
   const ew = typeof d.ew === 'string' && WEP[d.ew] ? d.ew : '';
   const cx = clamp(Math.floor(+d.cx || 0), 0, WTOTAL());
   const inf = typeof d.info === 'string' ? d.info.split('#') : [];
-  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx, bi: infoParse(inf[0]), ei: infoParse(inf[1]) };
+  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx, bi: infoParse(inf[0]), ei: infoParse(inf[1]), bs: clamp(Math.floor(+inf[2] || 0), 0, 1e12) };
 }
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
@@ -2056,7 +2057,7 @@ function rankPush(){
     if(!RK.db || !RK.uid || RK.writable === false || !S.name || RK.busy) return;
     const cb = clearedBest(), eb = S.eb || { s: 0, t: 0, d: 0 }, doc = { name: S.name, title: S.title || '', best: S.best, stage: cb.s, diff: cb.d, sv: 2, wep: wepOf(S.bestId).line, es: eb.s || 0, et: eb.t || 0, ed: eb.d || 0, ew: WEP[eb.w] ? eb.w : '' };
     if(!RK.noCx) doc.cx = foundCount();
-    if(RK.web && !RK.noInfo) doc.info = (S.binfo || '') + '#' + (eb.i || ''); /* 툴팁: the best sword's and the endless run's slots and enchants */ /* 도감: weapons found, over all weapons */
+    if(RK.web && !RK.noInfo) doc.info = (S.binfo || '') + '#' + (eb.i || '') + '#' + Math.round(((S.ebs || {})[S.bestSid] || 0)); /* 툴팁: the best sword's and the endless run's slots and enchants */ /* 도감: weapons found, over all weapons */
     const key = JSON.stringify(doc); if(key === RK.last) return;
     RK.busy = true;
     try{ await RK.db.doc('scores/' + RK.uid).set(doc); RK.last = key; RK.writable = true; if(RK.web) setTimeout(rankRefresh, 300); }
@@ -2206,6 +2207,7 @@ function enStageClear(){
 }
 function enRecord(){ // once per run: keep the best score (and its time and floor)
   if(!B || !B.endless || B.rec) return; B.rec = 1;
+  if(S.sid){ const m = S.ebs = S.ebs || {}; if(B.score > (m[S.sid] || 0)){ m[S.sid] = B.score; const ks = Object.keys(m); if(ks.length > 40) delete m[ks[0]]; if(S.sid === S.bestSid) rankPush(); } } // the best endless score each sword ever made, for the account board's tie-break
   const size = B.mp ? clamp(B.mpSize || B.mpMax || 1, 1, MP_MAX) : 1;
   if(size > 1){ // a party run: its own board per party size
     const t = Math.round(B.t), pw = Object.values(B.mpWith || {}).slice(0, 5).join(', '), best = (S.ebp = S.ebp || {})[size] || { s: 0, d: 0 };
@@ -4216,7 +4218,8 @@ function drawRank0(){
       if(psz > 1 && r.pw){ T('함께: ' + r.pw, 74, y + 19, { f: 's', c: '#8ad8ff' }); T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); return; }
       const ww = T(etab && !wok ? '무기 기록 없음' : '+' + wL + ' ' + (wok && (etab || WEP[wid].L === r.best) ? wName(wid) : r.best >= 10 ? '(무기 고르는 중)' : ''), 74, y + 19, { f: 's', c: etab && !wok ? COL.faint : wc });
       if(etab){ T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); T(fmt(r.es) + '점 · ' + fmtT(r.et), 260, y + 20, { f: 's', a: 'r', c: COL.dim }); return; }
-      const bw = T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
+      let bw = T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
+      if(r.bs){ const bt = '무한 ' + fmtK(r.bs) + '점', bl = 80 + nw + (r.title ? tw(r.title, 's') + 4 : 0); if(bl < 254 - bw - tw(bt, 's')){ T(bt, 254 - bw, y + 5, { f: 's', a: 'r', c: '#ffd27a' }); bw += tw(bt, 's') + 6; } } // that sword's endless score: what breaks a tie
       const sw2 = T(r.stage ? DIFF[r.diff][0] + ' ' + stLabel(r.stage) : '-', 260, y + 20, { f: 's', a: 'r', c: r.stage && r.diff !== 'normal' ? DIFF[r.diff][1] : COL.dim }); // stage, coloured by the difficulty it was reached on
       if(r.cx){ // 도감 completion: next to +level, or beside the stage when a long name is in the way
         const top = 80 + nw + (r.title ? tw(r.title, 's') + 4 : 0), bot = 78 + ww;

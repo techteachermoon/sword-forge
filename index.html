@@ -1253,11 +1253,14 @@ function migrate(){ // v2 kept found as an array of levels; v3 keys it by weapon
     if(g > 0){ S.gold += g; S.refund6 = g; }
   }
   S.gh = [0, 0, 0, 0, 0]; S.bls = [0, 0, 0, 0, 0]; S.rp = 0;
+  if(S.lv > 0 && !S.sid){ S.sid = newSid(); S.speak = S.lv; } // swords from before the sword board
+  S.vault.forEach(w => { if(!w.sid){ w.sid = newSid(); w.speak = w.lv; } });
   S.v = 6;
 }
 function registerFound(id){ if(S.found[id]) return false; S.found[id] = 1; G.codexNew = true; return true; }
 function noteBest(){
   const l = lineOf(); S.lbest[l] = Math.max(S.lbest[l] || 0, S.lv);
+  if(S.lv > 0){ if(!S.sid) S.sid = newSid(); const up = S.lv > (S.speak || 0); S.speak = Math.max(S.speak || 0, S.lv); if(up) swordSync(swordRec('alive')); } // the sword board
   if(needsJob()){ if(S.lv > S.best){ S.best = S.lv; rankPush(); } return; }
   if(S.lv >= S.best){ const up = S.lv > S.best || S.bestId !== curId(); S.best = S.lv; S.bestId = curId(); if(up) rankPush(); }
 }
@@ -1681,6 +1684,7 @@ function resolveForge(){
 }
 function destroyChoose(){
   const m = G.modal; if(!m || m.k !== 'destroy') return;
+  if(S.sid) swordSync(Object.assign(swordRec('broken'), { wid: m.id, lv: m.L })); S.sid = null; S.speak = 0;
   S.sh += m.sg; S.st += m.stg; gainSxp(5 + m.L); S.lv = 0; resetRun(); S.destroyed++; log(`+${m.L} 파괴 · 파편 +${m.sg}${m.stg ? ' · 별조각 +' + m.stg : ''}`);
   G.modal = null; F.hidden = false; F.st = 'idle'; save(); checkAch();
   if(S.vault.length && !S.inhPend) say('보관함에 검이 있다. 그걸로 사냥해서 다시 일어서라.');
@@ -1701,6 +1705,7 @@ function sellSword(){
   const L = S.lv; if(F.st !== 'idle' || G.modal || L < 1) return;
   if(L >= 12 && F.sellArm <= 0){ F.sellArm = 2.5; SFX.click(); return; }
   F.sellArm = 0;
+  if(S.sid) swordSync(swordRec('sold')); S.sid = null; S.speak = 0;
   const p = sellNow(L); S.gold += p; S.earned += p; S.sold++; gainSxp(Math.ceil(L / 2)); S.lv = 0; resetRun();
   if(L >= 20) S.sell20 = 1;
   track('sell', 1);
@@ -1735,19 +1740,20 @@ function buy(k, n = 1){
 }
 // ---------------- weapon vault: park a sword (with its enchants, engravings and cracks) and forge a new one ----------------
 const vaultPrice = () => S.vcap < 3 ? 150000 : S.vcap < 4 ? 2000000 : 0;
-const curPack = () => ({ lv: S.lv, line: S.line || 'c', ench: Object.assign({}, S.ench), engr: Object.assign({}, S.engr), eng: (S.eng || []).slice(), crack: S.crack || 0, adv: S.adv || 0 });
+const curPack = () => ({ sid: S.sid || newSid(), speak: Math.max(S.speak || 0, S.lv), lv: S.lv, line: S.line || 'c', ench: Object.assign({}, S.ench), engr: Object.assign({}, S.engr), eng: (S.eng || []).slice(), crack: S.crack || 0, adv: S.adv || 0 });
 const vaultReady = () => F.st === 'idle' && !needsJob() && !(S.enchPend > 0) && !S.inhPend;
 function vaultStore(){
   if(!vaultReady() || S.lv < 1){ SFX.deny(); return; }
   if(S.vault.length >= S.vcap){ SFX.deny(); toast('보관함이 가득 찼다'); return; }
-  S.vault.push(curPack());
+  const pk = curPack(); S.vault.push(pk); swordSync(packRec(pk, 'vault')); S.sid = null; S.speak = 0;
   S.lv = 0; S.line = 'c'; S.ench = {}; S.engr = {}; S.eng = []; S.enchPend = 0; S.adv = 0; S.crack = 0;
   SFX.buy(); say('잘 걸어 뒀다. 새 쇠를 꺼내마.'); log('검 보관'); save();
 }
 function vaultTake(i){
   const w = S.vault[i]; if(!w || !vaultReady()){ SFX.deny(); return; }
   const cur = S.lv > 0 ? curPack() : null;
-  S.vault.splice(i, 1); if(cur) S.vault.splice(i, 0, cur);
+  S.vault.splice(i, 1); if(cur){ S.vault.splice(i, 0, cur); swordSync(packRec(cur, 'vault')); }
+  S.sid = w.sid || newSid(); S.speak = Math.max(w.speak || 0, w.lv); swordSync(packRec(w, 'alive'));
   S.lv = w.lv; S.line = w.line; S.ench = w.ench || {}; S.eng = Array.isArray(w.eng) ? w.eng.slice() : []; engrSync(); S.crack = w.crack || 0; S.adv = w.adv || 0; S.enchPend = 0;
   migrate(); noteBest(); registerFound(curId());
   SFX.clang(); say(cur ? '검을 바꿔 들었다.' : '보관해 둔 검을 꺼냈다.'); log('보관함에서 +' + S.lv + ' 꺼냄'); G.modal = null; G.tab = 'forge'; save();
@@ -1919,6 +1925,7 @@ async function rankInit(){
     RK.unsub2 = db.collection('scores').orderBy('ed', 'desc').limit(60).onSnapshot(snap => { RK.erows = snap.docs.map(d => cleanRow(d.id, d.data())).filter(r => r && r.es > 0); }, () => {});
   }catch(e){ RK.status = 'err'; }
   rankPush();
+  if(S.sid && (S.speak || 0) >= 10) swordSync(swordRec('alive'));
 }
 function cleanRow(id, d){
   if(!d || typeof d !== 'object') return null;
@@ -1950,6 +1957,32 @@ function partyPull(size){
       RK.pb[size] = (rows || []).map(r => { const c = cleanRow(r.id, r); if(c) c.pw = String(r.pw || '').replace(/[\u0000-\u001f]/g, '').slice(0, 60); return c; }).filter(Boolean); RK.noParty = false; }
     catch(e){ if(e && (e.status === 404 || /party/.test(e.message || ''))) RK.noParty = true; }
     RK.pbBusy = false; })();
+}
+// ---- the sword board (supabase_swords.sql): one row per sword that reached +10, kept after it breaks or is sold ----
+const newSid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+const packId = pk => (pk.lv < 10 ? 'c' : lineAt(pk.line || 'c', pk.lv)) + ':' + pk.lv;
+const swordRec = fate => ({ id: S.sid, wid: curId(), lv: S.lv, peak: Math.max(S.speak || 0, S.lv), fate });
+const packRec = (pk, fate) => ({ id: pk.sid, wid: packId(pk), lv: pk.lv, peak: Math.max(pk.speak || 0, pk.lv), fate });
+const SWQ = new Map(); let swT = null;
+function swordSync(r){ if(!r || !r.id || r.peak < 10) return; SWQ.set(r.id, r); if(!swT) swT = setTimeout(swordFlush, 1200); }
+async function swordFlush(){
+  swT = null; if(!RK.web || !RK.uid || RK.noSwords || !S.name || !SWQ.size) return;
+  const rows = [...SWQ.values()].map(r => ({ id: r.id, uid: RK.uid, room: roomKey(), name: S.name, title: S.title || '', wid: WEP[r.wid] ? r.wid : '', peak: r.peak, lv: r.fate === 'broken' || r.fate === 'sold' ? 0 : r.lv, fate: r.fate, updated_at: new Date().toISOString() })); SWQ.clear();
+  try{ await sbFetch('/rest/v1/swords?on_conflict=id', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify(rows) }); RK.swAt = {}; }
+  catch(e){ if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; else rows.forEach(r => SWQ.has(r.id) || SWQ.set(r.id, Object.assign({}, r))); }
+}
+// boards read on demand: 'cur' = swords that still exist (in hand or in the vault), 'all' = every recorded sword
+function swordPull(kind){
+  RK.sw = RK.sw || {}; RK.swAt = RK.swAt || {};
+  if(!RK.web || RK.swBusy || (RK.swAt[kind] && G.t - RK.swAt[kind] < 8)) return;
+  RK.swAt[kind] = G.t; RK.swBusy = true;
+  const scope = G.rankScope === 'room' && S.room ? 'room=eq.' + encodeURIComponent(roomKey()) : 'room=' + (isSchoolSite() ? 'not.like.' : 'like.') + encodeURIComponent('~*');
+  const q = kind === 'cur' ? 'fate=in.(alive,vault)&order=lv.desc,peak.desc,updated_at.asc' : 'order=peak.desc,updated_at.asc';
+  (async () => { try{ const rows = await sbFetch('/rest/v1/swords?select=*&' + scope + '&' + q + '&limit=100', { headers: await sbAuthH() });
+      RK.sw[kind] = (rows || []).map(r => { let nm = String(r.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 8); if(!nm) return null; if(badName(nm)) nm = '(가린 이름)';
+        return { id: r.uid, sid: r.id, name: nm, title: TITLES.has(r.title) ? r.title : '', wid: WEP[r.wid] ? r.wid : '', peak: clamp(+r.peak || 0, 0, MAX), lv: clamp(+r.lv || 0, 0, MAX), fate: r.fate, at: r.updated_at }; }).filter(Boolean); RK.noSwords = false; }
+    catch(e){ if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; }
+    RK.swBusy = false; })();
 }
 function rankPush(){
   if(RK.timer) clearTimeout(RK.timer);
@@ -3888,6 +3921,32 @@ function setRoom(){
     S.room = String(v).replace(/[\s~]+/g, '').slice(0, 12); G.rankScope = S.room ? 'room' : 'all'; save(); RK.last = ''; rankPush(); rankRefresh(); toast(S.room ? RW() + ' 「' + S.room + '」 랭킹' : '전체 랭킹');
   });
 }
+// one row per sword: its picture, +peak and name, the owner, and what became of it
+function drawSwordBoard(kind){
+  swordPull(kind);
+  const st = G.scroll.rank, top = 66, h = 314, rowH = 36, rows = ((RK.sw || {})[kind] || []);
+  scrollArea(st, 0, top, VW, h, rows.length * rowH + 4);
+  g.save(); g.beginPath(); g.rect(0, top, VW, h); g.clip();
+  if(!rows.length) T(RK.noSwords ? '검 랭킹 저장소가 아직 없다 (선생님 설정 필요)' : kind === 'cur' ? '아직 +10 이상 검을 가진 사람이 없다' : '아직 기록된 검이 없다 (+10부터 남는다)', 135, top + 20, { f: 's', a: 'c', c: COL.faint });
+  const FATE = { alive: ['손에 듦', COL.good], vault: ['보관함', '#8ad8ff'], broken: ['파괴됨', COL.bad], sold: ['판매함', COL.gold] };
+  rows.forEach((r, i) => {
+    const y = top + 2 + i * rowH - Math.round(st.y); if(y > top + h || y + rowH < top) return;
+    const me = r.id === RK.uid, L = kind === 'cur' ? r.lv : r.peak;
+    R(4, y, 262, rowH - 2, me ? '#3a281c' : (i % 2 ? '#1a120d' : '#1e150f')); if(me) R(4, y, 2, rowH - 2, COL.ember);
+    T(String(i + 1), 14, y + 11, { f: 'b', a: 'c', c: ['#f7d24a', '#c8ccd4', '#d0884a'][i] || COL.dim });
+    R(24, y + 3, 44, 28, '#0e0906');
+    const wid = WEP[r.wid] ? r.wid : 'c:' + Math.min(9, L), wok = !!WEP[wid];
+    if(wok){ const sw = swordFrame(wid, G.t), sc = Math.min(1, 40 / sw.W, 24 / Math.max(1, sw.H || 24)); g.save(); g.translate(46 - sw.W * sc / 2, y + 17 - sw.cy * sc); g.scale(sc, sc); drawSword(wid, 0, 0, G.t, { still: 1, noGlow: true }); g.restore(); }
+    const wc = glowOf(wid, G.t) || COL.text;
+    T('+' + L + ' ' + (WEP[r.wid] ? wName(r.wid) : ''), 74, y + 3, { f: 'b', c: r.fate === 'broken' ? mixc(wc, '#000000', .25) : wc });
+    const nw = T(r.name, 74, y + 19, { f: 's', c: COL.text }); if(r.title) T(r.title, 78 + nw, y + 19, { f: 's', c: COL.ember });
+    const fz = FATE[r.fate] || FATE.alive; T(fz[0], 260, y + 3, { f: 's', a: 'r', c: fz[1] });
+    if(kind === 'all' && r.at){ const d = new Date(r.at), day = (d.getMonth() + 1) + '/' + d.getDate(); // the top ten that broke: when exactly
+      T(r.fate === 'broken' && i < 10 ? day + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ' 파괴' : day, 260, y + 19, { f: 's', a: 'r', c: r.fate === 'broken' && i < 10 ? COL.ember : COL.dim }); }
+    else if(kind === 'cur' && r.peak > r.lv) T('최고 +' + r.peak, 260, y + 19, { f: 's', a: 'r', c: COL.dim });
+  });
+  g.restore(); scrollbar(st, top, h);
+}
 function drawRank(){
   R(0, 26, VW, 408, '#140d0a');
   T('랭킹', 8, 31, { f: 'b' });
@@ -3908,10 +3967,12 @@ function drawRank(){
       button('rks_set', 198, 384, 68, 18, '코드 바꾸기', null, setRoom, { small: true });
       T(RK.status === 'loading' ? '불러오는 중...' : etab ? '층수 순' : '최고 강화 순', VW - 8, 33, { f: 's', a: 'r', c: COL.dim }); }
     else T(RK.status === 'loading' ? '불러오는 중...' : (RK.writable === false ? '보기 전용' : etab ? '층수 순' : '최고 강화 순'), VW - 8, 33, { f: 's', a: 'r', c: RK.writable === false ? COL.bad : COL.dim });
-    const psz = etab ? (G.rankSize || 1) : 1;
+    const psz = etab ? (G.rankSize || 1) : 1, fsub = etab ? 'best' : (G.rankSub || 'best');
+    if(!etab && RK.web){ [['best', '계정 최고'], ['cur', '현재 보유'], ['all', '역대 검']].forEach(([k, lb], i) => button('rsb' + k, 4 + i * 88, 48, 86, 15, lb, null, () => { G.rankSub = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: fsub === k ? 'gold' : 'normal' })); }
+    if(fsub !== 'best'){ drawSwordBoard(fsub); return; }
     if(etab){ for(let k = 1; k <= MP_MAX; k++){ const on = psz === k, bx = 4 + (k - 1) * 44; button('rsz' + k, bx, 48, 42, 15, k === 1 ? '솔로' : k + '인', null, () => { G.rankSize = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: on ? 'gold' : 'normal' }); } }
     if(psz > 1) partyPull(psz);
-    const st = G.scroll.rank, top = etab ? 66 : 50, h = etab ? 314 : 330, rowH = 36;
+    const st = G.scroll.rank, top = etab || RK.web ? 66 : 50, h = etab || RK.web ? 314 : 330, rowH = 36;
     const rows = !etab ? RK.rows : psz > 1 ? ((RK.pb || {})[psz] || []).slice().sort(enOrder) : (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder);
     scrollArea(st, 0, top, VW, h, rows.length * rowH + 4);
     g.save(); g.beginPath(); g.rect(0, top, VW, h); g.clip();

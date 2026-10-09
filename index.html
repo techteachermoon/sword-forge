@@ -3093,14 +3093,14 @@ function svKill(m){
   save();
 }
 const ATTACKS = { swing: svSwing, stab: svStab, throw: svThrow, cast: svCast };
-function svAttack(){ (ATTACKS[br().attack] || svSwing)(); }
+function svAttack(){ return (ATTACKS[br().attack] || svSwing)(); } // false: nothing in reach, the attack stays ready
 // 보스 우선 (S.opts.bossT): a living boss in reach goes to the front of every target list
 function toggleBossT(){ S.opts.bossT = !S.opts.bossT; save(); SFX.click(); } // no toast: the button itself shows ON/OFF, nothing covers the field
 const bossTgt = range => { if(!S.opts.bossT || !B) return null; const P = B.P, b = B.mons.find(m => m.kind === 'boss' && m.die === 0); return b && Math.hypot(b.x - P.x, b.y - P.y) < (range || 999) ? b : null; };
 function svNear(n, range){ const P = B.P, bt = bossTgt(range); const l = B.mons.filter(m => m.die === 0 && m !== bt && Math.hypot(m.x - P.x, m.y - P.y) < (range || 999)).sort((a, b) => Math.hypot(a.x - P.x, a.y - P.y) - Math.hypot(b.x - P.x, b.y - P.y)); if(bt) l.unshift(bt); return l.slice(0, n); }
 function svStab(){ // twin daggers: quick alternating slashes at whatever is close
   const P = B.P, R = svR(), tg = svNear(1 + sk('twice') + sk('shadow'), R + 24);
-  if(!tg.length) return;
+  if(!tg.length) return false;
   B.hand = -(B.hand || 1);
   const arcs = tg.map(m => [Math.atan2(m.y - P.y, m.x - P.x) + B.hand * .3, 1.6]);
   B.swing = { t: 0, dur: svMotion(br().swingTime), arcs, spins: 1, R, hit: new Set(), aim: arcs[0][0] }; mpSwingOut();
@@ -3112,13 +3112,13 @@ function svVolley(){ // 비도술사: a ring of knives
 }
 function svThrow(){ // twin blades: knives at the nearest monsters
   const P = B.P, r = br(), n = r.throwCount + sk('twice') + sk('fan') + (tr('t2_storm') ? 1 : 0), tg = svNear(n, r.throwRange);
-  if(!tg.length) return;
+  if(!tg.length) return false;
   for(let i = 0; i < n; i++){ const m = tg[i % tg.length], a = Math.atan2(m.y - P.y, m.x - P.x) + (i >= tg.length ? (Math.random() - .5) * .5 : 0); B.shots.push({ src: '단검 던지기 (기본)', basic: true, x: P.x, y: P.y - 2, vx: Math.cos(a) * r.throwSpeed, vy: Math.sin(a) * r.throwSpeed, life: r.throwTime, a, pierce: 1 + sk('pierce') + (tr('t2_storm') ? 1 : 0), hit: new Set(), dag: true, dmg: r.throwHit }); }
   SFX.blip();
   B.swN++; svWave(Math.atan2(tg[0].y - P.y, tg[0].x - P.x));
 }
 function svCast(){ // magic sword: a blast on the nearest monster
-  const P = B.P, range = br().castRange, near = svNear(12, range); if(!near.length) return;
+  const P = B.P, range = br().castRange, near = svNear(12, range); if(!near.length) return false;
   const r0 = svR(); let tg = near[0], best = 0; // aim at the thickest knot of monsters
   for(const c of near){ const n = near.filter(o => Math.hypot(o.x - c.x, o.y - c.y) < r0).length; if(n > best){ best = n; tg = c; } }
   if(bossTgt(range)) tg = bossTgt(range);
@@ -3158,6 +3158,7 @@ function svWave(aim){
 }
 function svSwing(){
   const P = B.P, R = svR(), great = br().spin;
+  if(!B.mons.some(m => m.die === 0 && Math.hypot(m.x - P.x, m.y - P.y) <= R + m.r)) return false; // nothing in reach: no swing at the air
   // common: an arc toward the nearest monster; great: a full spin
   const near = bossTgt(R * 1.6) || B.mons.filter(m => m.die === 0).sort((a, b) => Math.hypot(a.x - P.x, a.y - P.y) - Math.hypot(b.x - P.x, b.y - P.y))[0];
   const aim = near ? Math.atan2(near.y - P.y, near.x - P.x) : Math.atan2(P.fy, P.fx);
@@ -3262,7 +3263,7 @@ function survUpdate(dt){
   if(P.inv > 0) P.inv -= dt;
   if(B.comboT > 0){ B.comboT -= dt; if(B.comboT <= 0) B.combo = 0; }
   // weapon
-  if(!busy){ B.swT -= dt; for(let n = 0; B.swT <= 0 && n < 30; n++){ if(B.swing) svUpdateSwing(B.swing.dur); B.swT += svCd(); svAttack(); } if(B.swT < 0) B.swT = 0; } // leftover time carries over, so the real rate matches svCd at any frame rate
+  if(!busy){ B.swT -= dt; for(let n = 0; B.swT <= 0 && n < 30; n++){ if(B.swing) svUpdateSwing(B.swing.dur); if(svAttack() === false){ B.swT = 0; break; } B.swT += svCd(); } if(B.swT < 0) B.swT = 0; } // leftover time carries over, so the real rate matches svCd at any frame rate
   svUpdateSwing(dt); svUpdateCasts(dt); if(B.castT > 0) B.castT -= dt;
   const nOrb = B.dead ? 0 : (B.danceT > 0 ? 6 + sk('mist') * 2 : 0) + sk('orbit') * 2; /* a fallen smith's skills rest too */
   if(B.danceT > 0) B.danceT -= dt;

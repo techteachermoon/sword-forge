@@ -5015,6 +5015,12 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
   const btn = document.createElement('button'); btn.id = 'trBtn'; btn.textContent = '🧪'; btn.title = '테스트룸'; document.body.appendChild(btn);
   const P = document.createElement('div'); P.id = 'trP'; document.body.appendChild(P);
   btn.onclick = () => { P.style.display = P.style.display === 'block' ? 'none' : 'block'; if(P.style.display === 'block') build(); };
+  // swipe right to close: the panel follows the finger, a long enough swipe shuts it
+  let sw0 = null;
+  P.addEventListener('touchstart', e => { const t = e.touches[0]; sw0 = { x: t.clientX, y: t.clientY, h: null }; }, { passive: true });
+  P.addEventListener('touchmove', e => { if(!sw0) return; const t = e.touches[0], dx = t.clientX - sw0.x, dy = t.clientY - sw0.y;
+    if(sw0.h == null && Math.hypot(dx, dy) > 10) sw0.h = Math.abs(dx) > Math.abs(dy); if(sw0.h){ P.style.transform = 'translateX(' + Math.max(0, dx) + 'px)'; sw0.dx = dx; } }, { passive: true });
+  P.addEventListener('touchend', () => { if(sw0 && sw0.h && sw0.dx > 70) P.style.display = 'none'; P.style.transform = ''; sw0 = null; });
   const el = (tag, attrs, kids) => { const e = document.createElement(tag); Object.assign(e, attrs || {}); (kids || []).forEach(k => e.append(k)); return e; };
   const bt = (t, fn, on) => el('button', { textContent: t, className: on ? 'on' : '', onclick: () => { try{ fn(); }catch(e){ toast('테스트룸 오류: ' + e.message); } save(); build(); } });
   const sel = (opts, v) => { const s = el('select'); opts.forEach(([k, t]) => s.append(el('option', { value: k, textContent: t, selected: k === v }))); return s; };

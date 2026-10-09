@@ -2405,14 +2405,14 @@ function mpFxIn(o, fx){
   }
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
-function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y)]); }
+function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y), hurtTy(src) === 'magic' ? 1 : 0]); }
 const mpMe = () => ({ wid: B.wid, wc: B.wcol, mv: meMoving() && !B.dead ? 1 : 0, ob: (B.orbs || []).length, au: sk('aura') && !B.dead ? 1 : 0, shd: B.shield && !B.dead ? 1 : 0, v: MP_VER, dead: !!(B.over || B.dead), st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
     ms: B.mons.filter(m => m.die === 0 && m.nid).map(m => [m.nid, m.key, Math.max(0, MP_KIND.indexOf(m.kind)), Math.round(m.x), Math.round(m.y), Math.ceil(m.hp), Math.ceil(m.max), m.face < 0 ? -1 : 1,
       (m.fast ? 1 : 0) | (m.slowT > 0 ? 2 : 0) | (m.stun > 0 ? 4 : 0) | (m.burnT > 0 ? 8 : 0) | (m.poisonT > 0 ? 16 : 0) | (m.mini ? 32 : 0) | (m.hitT > 0 ? 64 : 0), m.ai, r1(m.sc), m.dmg, Math.round(m.spd), Math.round(m.def || 0), m.act || 0, r1(m.actT || 0), r1(m.da || 0), r1(Math.min(.35, m.born)), Math.round(m.mdef ?? m.def ?? 0)]),
-    es: B.eshots.slice(0, 60).map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.dmg]) });
+    es: B.eshots.slice(0, 60).map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.dmg, e.ty === 'magic' ? 1 : 0]) });
 }
 // everyone but the host: copy the host's field
 function mpWorld(p){
@@ -2442,8 +2442,8 @@ function mpWorld(p){
     if(fl & 2) m.slowT = Math.max(m.slowT, .2); if(fl & 4) m.stun = Math.max(m.stun, .2); if(fl & 8) m.burnT = Math.max(m.burnT, .2); if(fl & 16) m.poisonT = Math.max(m.poisonT, .2);
   }
   for(const m of B.mons) if(m.die === 0 && m.nid && !seen.has(m.nid)){ m.die = .001; m.hp = 0; killFx(m); } // gone on the host: someone got it
-  B.eshots = (p.es || []).map(([x, y, vx, vy, dmg]) => ({ x, y, vx, vy, life: 3, dmg }));
-  for(const h of p.hu || []) if(h[0] === MP.me && !B.over && B.P.inv <= 0) svHurt({ dmg: h[1], x: h[2], y: h[3] });
+  B.eshots = (p.es || []).map(([x, y, vx, vy, dmg, mg]) => ({ x, y, vx, vy, life: 3, dmg, ty: mg ? 'magic' : 'phys' }));
+  for(const h of p.hu || []) if(h[0] === MP.me && !B.over && B.P.inv <= 0) svHurt({ dmg: h[1], x: h[2], y: h[3], ty: h[4] ? 'magic' : 'phys' });
   for(const [nid, t] of MP.killed) if(G.t - t > 3) MP.killed.delete(nid);
 }
 function mpFloor(p){
@@ -2702,14 +2702,18 @@ const MRES = { golem: [35, -10], b_golem: [45, -10], skel: [20, 0], b_skel: [20,
 const monRes = (key, base) => { const r = MRES[key] || [0, 0]; return [Math.max(-50, base + r[0]), Math.max(-50, base + r[1])]; };
 const MST = { slime: [22, .9], shroom: [17, 1.2], bat: [54, .55], spider: [44, .8], goblin: [32, 1], wolf: [42, .9], skel: [27, 1.1], ghost: [36, .75], imp: [34, .9], golem: [14, 2.6], wyvern: [50, 1], drake: [27, 1.4], t_slime: [40, 1], bee: [52, .5], cslime: [24, 1.3], boar: [34, 1.5], wisp: [34, .7], mslime: [24, 1.4], fwisp: [40, .8] };
 const ESHOT_C = ['#a8ff7a', '#c58bff', '#c8a070', '#e8e0d0', '#ff7a2a', '#ff5a4a'];
-function eShoot(m, a, sp){ B.eshots.push({ x: m.x, y: m.y - m.r * .6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 3, dmg: Math.round(m.dmg * .8) }); }
+// monster attacks are 물리 or 마법 too: [body contact, shot]. p = physical (claws, blades, arrows), m = magic (spores, spirit touch, fire, spells)
+const MATK = { shroom: 'mp', ghost: 'mm', imp: 'pm', drake: 'pm', b_drake: 'mm', wisp: 'mm', fwisp: 'mm', mslime: 'mm', b_skel: 'mm', b_golem: 'pm', cslime: 'pm' };
+const monAtk = (key, shot) => ((MATK[key] || 'pp')[shot ? 1 : 0] === 'm' ? 'magic' : 'phys');
+const hurtTy = src => src.ty || (src.key ? monAtk(src.key, false) : 'phys');
+function eShoot(m, a, sp){ B.eshots.push({ x: m.x, y: m.y - m.r * .6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 3, dmg: Math.round(m.dmg * .8), ty: monAtk(m.key, true) }); }
 const BOOM_R = 40;
 function monBoom(m){
   m.hp = 0; m.die = .001; m.fled = true; G.shake = Math.max(G.shake, 4); SFX.boom();
   B.blasts.push({ x: m.x, y: m.y, r: BOOM_R, t: 0 });
   burst(m.x, m.y - 4, 26, ['#ff9a2a', '#fff2a0', '#d8401a', '#3a0a0a'], 120, .5, 60);
-  const P = B.P; if(!B.dead && Math.hypot(P.x - m.x, P.y - m.y) < BOOM_R + 4 && P.inv <= 0) svHurt({ dmg: Math.round(m.dmg * 1.6), x: m.x, y: m.y });
-  if(B.mp) for(const o of mpPeers()) if(Math.hypot(o.x - m.x, o.y - m.y) < BOOM_R + 4) mpHurt(o, Math.round(m.dmg * 1.6), m);
+  const P = B.P; if(!B.dead && Math.hypot(P.x - m.x, P.y - m.y) < BOOM_R + 4 && P.inv <= 0) svHurt({ dmg: Math.round(m.dmg * 1.6), x: m.x, y: m.y, ty: monAtk(m.key, true) }); // a wisp going off: its own kind of blast
+  if(B.mp) for(const o of mpPeers()) if(Math.hypot(o.x - m.x, o.y - m.y) < BOOM_R + 4) mpHurt(o, Math.round(m.dmg * 1.6), { x: m.x, y: m.y, ty: monAtk(m.key, true) });
   for(const o of B.mons) if(o !== m && o.die === 0 && Math.hypot(o.x - m.x, o.y - m.y) < BOOM_R) svHit(o, 2, { depth: 3, noProc: true, c: '#ff9a2a', src: '몬스터 폭발 유도' }); // it hurts its friends too
 }
 function monAct(m, dt, P, d, dx, dy){ // returns true if it handled movement itself
@@ -3111,7 +3115,7 @@ function survUpdate(dt){
   for(let i = B.eshots.length - 1; i >= 0; i--){ const e = B.eshots[i]; if(!e) continue; e.x += e.vx * dt; e.y += e.vy * dt; e.life -= dt;
     if(e.life <= 0){ B.eshots.splice(i, 1); continue; }
     if(rep) continue; /* the host decides who a bullet hits */
-    if(Math.hypot(e.x - P.x, e.y - (P.y - 3)) < 6){ B.eshots.splice(i, 1); if(P.inv <= 0) svHurt({ dmg: e.dmg }); continue; }
+    if(Math.hypot(e.x - P.x, e.y - (P.y - 3)) < 6){ B.eshots.splice(i, 1); if(P.inv <= 0) svHurt({ dmg: e.dmg, ty: e.ty }); continue; }
     if(B.mp) for(const o of mpPeers()) if(Math.hypot(e.x - o.x, e.y - (o.y - 3)) < 6){ B.eshots.splice(i, 1); mpHurt(o, e.dmg, e); break; } }
   // move: drag joystick or keys
   let mx = (KEYS.ArrowRight || KEYS.d ? 1 : 0) - (KEYS.ArrowLeft || KEYS.a ? 1 : 0), my = (KEYS.ArrowDown || KEYS.s ? 1 : 0) - (KEYS.ArrowUp || KEYS.w ? 1 : 0);
@@ -3253,7 +3257,7 @@ function svHurt(m){
   B.ouch = { t: 0 }; SFX.ouch(); if(P.hp > 0 && P.hp < P.max * .3) setTimeout(() => SFX.heart(), 230);
   try{ if(sfxOn() && navigator.vibrate) navigator.vibrate([45, 35, 45]); }catch(_){}
   for(let i = 0; i < 10; i++){ const a = Math.random() * 6.28, v = 60 + Math.random() * 70; G.parts.push({ x: P.x, y: P.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 30, life: .35, max: .35, c: i % 3 ? '#ff3a2a' : '#ffffff', grav: 200, sp: 1 }); }
-  B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: '#ff5a4a' });
+  B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: hurtTy(m) === 'magic' ? '#d070ff' : '#ff5a4a' }); // 물리 red, 마법 violet
   if(P.hp <= 0) loseBattle('hp');
 }
 const meMoving = () => !!(B.joy || KEYS.a || KEYS.d || KEYS.w || KEYS.s || KEYS.ArrowLeft || KEYS.ArrowRight || KEYS.ArrowUp || KEYS.ArrowDown);
@@ -3325,7 +3329,8 @@ function survDraw(dt){
     g.globalAlpha = 1;
     if(m.die === 0 && (m.kind !== 'normal' || m.hp < m.max) && m.kind !== 'boss') bar(Math.round(m.x - 9), dy - 4, 18, 2, m.hp / m.max, m.kind === 'gold' ? '#f7d24a' : '#d8402e');
   }
-  for(const e of B.eshots){ const c = ESHOT_C[B.ai]; R(Math.round(e.x) - 2, Math.round(e.y) - 2, 5, 5, COL.ink); R(Math.round(e.x) - 1, Math.round(e.y) - 1, 3, 3, c); P(e.x, e.y, '#ffffff'); }
+  for(const e of B.eshots){ const ex = Math.round(e.x), ey = Math.round(e.y); if(e.ty === 'magic'){ const pu = Math.floor(G.t * 10) % 2; R(ex - 2, ey - 3, 5, 7, COL.ink); R(ex - 3, ey - 2, 7, 5, COL.ink); R(ex - 2, ey - 2, 5, 5, pu ? '#a050ff' : '#c070ff'); R(ex - 1, ey - 1, 3, 3, '#e8c8ff'); P(ex, ey, '#ffffff'); } // 마법: a pulsing violet orb
+    else { const c = ESHOT_C[B.ai], a = Math.atan2(e.vy, e.vx), dx = Math.round(Math.cos(a) * 2), dy = Math.round(Math.sin(a) * 2); R(ex - 2, ey - 2, 5, 5, COL.ink); R(ex - 1, ey - 1, 3, 3, c); P(ex + dx, ey + dy, '#ffffff'); P(ex - dx, ey - dy, mixc(c, '#000000', .4)); } } // 물리: a dart with a bright tip
   for(let i = (B.stars || []).length - 1; i >= 0; i--){ const st = B.stars[i]; st.t += dt; if(st.t > .18){ B.stars.splice(i, 1); continue; } const k = st.t / .18, L = Math.round(3 + k * 7); g.globalAlpha = 1 - k; R(st.x - L, st.y, L * 2 + 1, 1, '#ffffff'); R(st.x, st.y - L, 1, L * 2 + 1, '#ffffff'); R(st.x - 1, st.y - 1, 3, 3, '#ffe070'); g.globalAlpha = 1; }
   if(GQ()) for(const r of B.rings || []){ const k = Math.max(0, r.t) / .25; if(k >= 1) continue; const rr = r.r * (.4 + k); g.globalAlpha = 1 - k; ellS(r.x, r.y, rr, rr * .8, 2.5 * (1 - k) + .6, '#ffffff'); g.globalAlpha = (1 - k) * .5; ellS(r.x, r.y, rr * .7, rr * .56, 1, '#fff2c0'); g.globalAlpha = 1; }
   else for(const r of B.rings || []){ const k = r.t / .25; g.globalAlpha = 1 - k; for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(r.x + Math.cos(an) * r.r * (.4 + k), r.y + Math.sin(an) * r.r * (.4 + k) * .8, '#ffffff'); } g.globalAlpha = 1; }

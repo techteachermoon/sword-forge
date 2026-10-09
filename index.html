@@ -2489,7 +2489,7 @@ function mpTarget(m){
 }
 // effects travel with every message: new blasts, bolts, pillars, casts, fire fields, thrown blades and swings.
 // What arrives is only drawn (rm): it never hits anything here, the damage already went through the host.
-function mpSwingOut(){ const sw = B.swing; if(!B.mp || !sw) return; const f2 = v => Math.round(v * 100) / 100; MP.ev = MP.ev || []; MP.ev.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), Math.round(sw.R), f2(sw.dur), sw.spins || 1]); }
+function mpSwingOut(){ const sw = B.swing; if(!B.mp || !sw || B.t - (B.mpSwT ?? -1) < .05) return; B.mpSwT = B.t; const f2 = v => Math.round(v * 100) / 100; MP.ev = MP.ev || []; MP.ev.push(['w', sw.arcs.map(([a, sp]) => [f2(a), f2(sp)]), Math.round(sw.R), f2(sw.dur), sw.spins || 1]); }
 function mpFxOut(){
   const out = [], r = Math.round, f2 = v => Math.round(v * 100) / 100;
   for(const b of B.blasts) if(!b._n && !b.rm){ b._n = 1; out.push(['b', r(b.x), r(b.y), r(b.r), (b.magic ? 1 : 0) | (b.quake ? 2 : 0) | (b.fire ? 4 : 0)]); }
@@ -2785,13 +2785,20 @@ function svDotTick(m, dt){ // true: it died
 const upB = k => Math.ceil(SVC[k][1] / 2);
 const sk = k => B && B.sk ? (B.sk[k] || 0) + (B.up && B.up[k] ? upB(k) : 0) : 0;
 const upReady = () => Object.keys(B.sk).filter(k => SVC[k] && B.sk[k] >= SVC[k][1] && !B.up[k]);
-const svDmgMul = () => (1 + sk('sharp') * .2) * (1 + en('might') * .15) * (B.fx === '' ? 1.1 : B.fx === 'prism' ? 1.2 : 1) * (tr('collect') ? 1 + Object.keys(B.sk).length * .05 : 1) * (masterOn() ? 1.5 : 1) * (tr('g1_feast') && B.P.hp < B.P.max * .3 ? 1.4 : 1);
-function svCd(){
-  const r = br(), c = r.cd;
-  const spd = 1 + sk('haste') * .12 + (sk('rage') && B.P.hp <= B.P.max / 2 ? sk('rage') * .3 : 0) + (r.rage ? r.rage * (1 - B.P.hp / B.P.max) : 0);
-  return Math.max(.1, c / spd / (masterOn() ? 1.25 : 1)); // no real cap: stack speed and it never stops spinning
-}
-const svR = () => { const r = br(); return Math.round((r.reach * (1 + sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0)) + Math.min(S.lv, 30) * r.reachLv) * (r.stormReach && tr('g_storm') ? 1.25 : 1)); };
+let TST = null; // 테스트룸 스탯 조절 (test server only): added on top of cards and enchants
+// buckets (docs/MECHANICS.md 1.0): add inside a bucket, multiply between buckets; a negative sum shrinks toward 0 but never reaches it
+const bucket = s => s >= 0 ? 1 + s : 1 / (1 - s);
+const svDmgAdd = (m, o = {}) => sk('sharp') * .2 + en('might') * .15 + (B.fx === '' ? .1 : B.fx === 'prism' ? .2 : 0) + (tr('collect') ? Object.keys(B.sk).length * .05 : 0) + (tr('g1_feast') && B.P.hp < B.P.max * .3 ? .4 : 0)
+  + (m ? (tr('bossh') && m.kind === 'boss' ? .25 : 0) + (B.fx === 'void' && (m.kind === 'elite' || m.kind === 'boss') ? .3 : 0) + (B.fx === 'serrate' ? Math.min(.5, Math.max(0, (m.ser || 1) - 1) * .1) : 0) : 0)
+  + (o.dot ? 0 : (br().nova ? sk('nova') * .2 : 0) + sk('blood') * .35) + (TST ? TST.dmg : 0); // 피해 증가 +
+const svTakenAdd = m => (m && m.slowT > 0 ? E('ice') * .05 : 0) + (TST ? TST.taken : 0); // 받는 피해 증가 + (lives on the monster)
+const svMore = () => (masterOn() ? 1.5 : 1) * (TST ? TST.more : 1); // 최종 피해 × : keep these rare
+const svDmgMul = () => bucket(svDmgAdd()) * svMore();
+const svAspd = () => { const r = br(); return sk('haste') * .12 + (sk('rage') && B.P.hp <= B.P.max / 2 ? sk('rage') * .3 : 0) + (r.rage ? r.rage * (1 - B.P.hp / B.P.max) : 0) + (masterOn() ? .25 : 0) + (TST ? TST.aspd : 0); }; // 공속 +
+const svCd = () => br().cd / bucket(svAspd()); // no cap
+const svMotion = t => Math.min(t, br().cd * .9) / bucket(svAspd()); // the swing speeds up with attack speed and always ends inside the interval
+const hitSfx = () => { if(B.t - (B.sfxT ?? -1) >= .05){ B.sfxT = B.t; SFX.hit(); } }; // very fast attacks: one swish per 0.05s
+const svR = () => { const r = br(); return Math.round((r.reach * (1 + sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0) + (TST ? TST.reach : 0)) + Math.min(S.lv, 30) * r.reachLv) * (r.stormReach && tr('g_storm') ? 1.25 : 1)); };
 function svLayout(){ SV.y0 = 46; SV.h = FH - 46; SV.ww = Math.max(900, FW + 160); SV.wh = Math.max(700, FH + 160); }
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
 const ST_LEN = [19, 30, 54, 80, 108, 150]; // 지옥 6지역 ≈ 6~8분, the first two areas fly by
@@ -2943,19 +2950,15 @@ const atkFor = o => { const ty = dType(o), st = o.stat || (ty === 'true' ? 'weap
 // the armour a hit meets: 물리 → physical, 마법 → magic, 고정 → none
 const armOf = (m, ty) => ty === 'true' ? 0 : ((ty === 'magic' ? m.mdef : m.def) ?? m.def ?? 0);
 const dType = (o) => o.ty || (o.src === '필살기' ? br().finisher : DTYPE_MAGIC.test(o.src || '') ? 'magic' : 'phys');
-const critChance = () => br().crit + en('crit') * .07 + (B.fx === 'moon' ? .1 : B.fx === 'rainbow' ? .05 : 0) + (tr('crit') ? .1 : 0);
-const critMul = () => 2 + (B.fx === 'stars' ? .5 : 0) + sk('vital') * .5 + (tr('crit') ? .8 : 0);
+const critChance = () => br().crit + en('crit') * .07 + (B.fx === 'moon' ? .1 : B.fx === 'rainbow' ? .05 : 0) + (tr('crit') ? .1 : 0) + (TST ? TST.crit : 0);
+const critMul = () => 2 + (B.fx === 'stars' ? .5 : 0) + sk('vital') * .5 + (tr('crit') ? .8 : 0) + (TST ? TST.critd : 0);
 function svHit(m, base, o = {}){
   if(m.die !== 0 || B.over || !(m.hp > 0)) return; // already emptied: a hit nested in the blow that did it (빛기둥, 증기 폭발); that blow finishes it
   const hp0 = m.hp;
   const fx = B.fx;
   const ty = dType(o), crit = !!o.basic && ty === 'phys' && (Math.random() < critChance() || B.critT > 0); // only physical basic attacks crit (a magic-crit trait may come later)
-  let mult = base * svDmgMul() * (crit ? critMul() : 1) * (tr('bossh') && m.kind === 'boss' ? 1.25 : 1) * (.9 + Math.random() * .2);
-  if(br().nova && !o.dot) mult *= 1 + sk('nova') * .2;
-  if(fx === 'void' && (m.kind === 'elite' || m.kind === 'boss')) mult *= 1.3;
-  if(fx === 'serrate'){ m.ser++; mult *= 1 + Math.min(.5, (m.ser - 1) * .1); }
-  if(m.slowT > 0) mult *= 1 + E('ice') * .05;
-  if(sk('blood') && !o.dot) mult *= 1 + sk('blood') * .35;
+  if(fx === 'serrate') m.ser = (m.ser || 0) + 1;
+  const mult = base * bucket(svDmgAdd(m, o)) * bucket(svTakenAdd(m)) * svMore() * (crit ? critMul() : 1) * (.9 + Math.random() * .2);
   let dmg = Math.max(1, Math.round(atkFor(o) * mult * armF(armOf(m, ty)))); // 물리 → physical armour, 마법 → magic armour, 고정 → none
   if(fx === 'stick' && !o.dot && m.kind !== 'boss' && Math.random() < .08){ dmg = Math.max(dmg, m.hp); B.nums.push({ x: m.x, y: m.y - m.r - 16, v: '자연!', crit: true, t: 0, c: '#b8f0a0' }); }
   if(o.exec && br().execute && m.hp / m.max <= br().execute[m.kind === 'boss' ? 1 : 0] + (tr('t1_exec') ? .15 : 0)){ dmg = Math.max(dmg, m.hp); B.nums.push({ x: m.x, y: m.y - m.r - 16, v: '처형!', crit: true, t: 0, c: '#c58bff' }); }
@@ -2965,7 +2968,7 @@ function svHit(m, base, o = {}){
   { const a = Math.min(dmg, Math.max(0, m.hp)); if(o.split != null){ dRec(m, '화상 (지속)', a * o.split, crit, ty); dRec(m, '중독 (지속)', a * (1 - o.split), crit, ty); } else dRec(m, o.src || (o.dot ? '지속 피해' : '기타'), a, crit, ty); }
   m.hp -= dmg; m.hitT = .1;
   if(!o.dot){ for(let i = 0; i < (crit ? 4 : 2); i++){ const a = Math.random() * 6.28; G.parts.push({ x: m.x, y: m.y - m.r * .5, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: .18, max: .18, c: crit ? '#ffe070' : '#ffffff', grav: 220, streak: 1 }); } if(crit){ G.shake = Math.max(G.shake, 1.5); B.stars = B.stars || []; if(GQ()) B.stars.push({ x: m.x, y: m.y - m.r * .5, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } }
-  if(o.kb){ const d = Math.hypot(m.x - B.P.x, m.y - B.P.y) || 1, k = (m.kind === 'boss' ? .2 : 1) * (tr('g_storm') ? 2 : 1); m.kx += (m.x - B.P.x) / d * o.kb * k; m.ky += (m.y - B.P.y) / d * o.kb * k; }
+  if(o.kb && !m.dummy){ const d = Math.hypot(m.x - B.P.x, m.y - B.P.y) || 1, k = (m.kind === 'boss' ? .2 : 1) * (tr('g_storm') ? 2 : 1); m.kx += (m.x - B.P.x) / d * o.kb * k; m.ky += (m.y - B.P.y) / d * o.kb * k; }
   B.nums.push({ x: m.x + (Math.random() - .5) * 8, y: m.y - m.r - 4, v: fmtK(dmg), crit, ci: crit, t: 0, c: numCol(ty, crit), small: !!o.dot, dn: 1 });
   if(B.mp){ MP.dn = MP.dn || []; MP.dn.push(['d', Math.round(m.x), Math.round(m.y - m.r - 4), dmg, (crit ? 1 : 0) | (o.dot ? 2 : 0) | (ty === 'magic' ? 4 : 0) | (ty === 'true' ? 8 : 0), '']); if(MP.dn.length > 40) MP.dn.shift(); } /* friends see my numbers too */ /* dn: a damage number (설정 → 데미지 숫자) */
   if(sk('leech') && !o.dot){ if(B.t - (B.leechT || 0) >= 1){ B.leechT = B.t; B.leechN = 0; } const h = Math.min(.5 * sk('leech'), sk('leech') * 3 - (B.leechN || 0)); if(h > 0){ B.leechN = (B.leechN || 0) + h; B.P.hp = Math.min(B.P.max, B.P.hp + h); } }
@@ -3099,8 +3102,8 @@ function svStab(){ // twin daggers: quick alternating slashes at whatever is clo
   if(!tg.length) return;
   B.hand = -(B.hand || 1);
   const arcs = tg.map(m => [Math.atan2(m.y - P.y, m.x - P.x) + B.hand * .3, 1.6]);
-  B.swing = { t: 0, dur: br().swingTime, arcs, spins: 1, R, hit: new Set(), aim: arcs[0][0] }; mpSwingOut();
-  B.swN++; SFX.hit(); svWave(arcs[0][0]);
+  B.swing = { t: 0, dur: svMotion(br().swingTime), arcs, spins: 1, R, hit: new Set(), aim: arcs[0][0] }; mpSwingOut();
+  B.swN++; hitSfx(); svWave(arcs[0][0]);
 }
 function svVolley(){ // 비도술사: a ring of knives
   const P = B.P, v = br().volley, n = v.count + sk('volley') * 6;
@@ -3159,10 +3162,10 @@ function svSwing(){
   const aim = near ? Math.atan2(near.y - P.y, near.x - P.x) : Math.atan2(P.fy, P.fx);
   const arcs = great ? [[aim, Math.PI * 2]] : sk('twice') ? [[aim, 2.2], [aim + Math.PI, 2.2]] : [[aim, 2.2]];
   const spins = great ? 1 + sk('twice') : 1;
-  B.swing = { t: 0, dur: br().swingTime * spins, arcs, spins, R, hit: new Set(), aim }; mpSwingOut();
+  B.swing = { t: 0, dur: svMotion(br().swingTime * spins), arcs, spins, R, hit: new Set(), aim }; mpSwingOut();
   B.swN++;
   if(sk('blood')) P.hp = Math.max(1, P.hp - 2);
-  SFX.hit(); if(great) G.shake = Math.max(G.shake, 1.5);
+  hitSfx(); if(great) G.shake = Math.max(G.shake, 1.5);
   svWave(aim);
   if(sk('quake') && B.swN % 3 === 0){
     const qr = R * 1.6; B.blasts.push({ x: P.x, y: P.y, r: qr, t: 0, quake: true }); G.shake = 5; SFX.boom();
@@ -3258,7 +3261,7 @@ function survUpdate(dt){
   if(P.inv > 0) P.inv -= dt;
   if(B.comboT > 0){ B.comboT -= dt; if(B.comboT <= 0) B.combo = 0; }
   // weapon
-  if(!busy){ B.swT -= dt; if(B.swT <= 0 && !B.swing){ B.swT = svCd(); svAttack(); } }
+  if(!busy){ B.swT -= dt; for(let n = 0; B.swT <= 0 && n < 30; n++){ if(B.swing) svUpdateSwing(B.swing.dur); B.swT += svCd(); svAttack(); } if(B.swT < 0) B.swT = 0; } // leftover time carries over, so the real rate matches svCd at any frame rate
   svUpdateSwing(dt); svUpdateCasts(dt); if(B.castT > 0) B.castT -= dt;
   const nOrb = B.dead ? 0 : (B.danceT > 0 ? 6 + sk('mist') * 2 : 0) + sk('orbit') * 2; /* a fallen smith's skills rest too */
   if(B.danceT > 0) B.danceT -= dt;
@@ -3674,7 +3677,7 @@ function survPauseDraw(){ // pause menu: the weapon, its enchants, elements and 
   rows.push({ h: 40, d: y => { const s = swordFrame(id, G.t); R(10, y, 250, 36, '#0e0906'); drawSword(id, Math.round(135 - s.W / 2), y + 18 - s.cy, G.t, { still: 1 }); } });
   line('+' + S.lv + ' ' + w.name + (w.line !== 'c' ? ' · ' + W.n : ''), '물공 ' + fmt(pAtk(S.lv, B.line)) + ' · 마공 ' + fmt(mAtk(S.lv, B.line)) + ' · ' + ci[0] + '. ' + ci[1], w.line !== 'c' ? W.col : COL.text);
   { const cr = Math.min(1, critChance()), cx = critMul();
-    line('전투 수치', '피해 ×' + svDmgMul().toFixed(2) + ' · 치명타 ' + Math.round(cr * 100) + '% (×' + cx.toFixed(1) + ') · 휘두르기 ' + svCd().toFixed(2) + '초 · 범위 ' + svR() + (B.endless ? ' · 특성 ' + ENT[B.tr][0] : ''), '#ffe070'); }
+    line('전투 수치', '피해 ×' + svDmgMul().toFixed(2) + ' · 치명타 ' + Math.round(cr * 100) + '% (×' + cx.toFixed(1) + ') · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 범위 ' + svR() + (B.endless ? ' · 특성 ' + ENT[B.tr][0] : ''), '#ffe070'); }
   traitsOf(w.line).forEach(t => { const [a, b] = t.split(': '); line(a, b || '', W.col); });
   if(classDepth(w.line) > 1) line('직업 능력', W.d, W.col);
   line('칼날 속성 · ' + FXE[fx][0], FXE[fx][1], '#8ad8ff');
@@ -5016,10 +5019,19 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
   const sel = (opts, v) => { const s = el('select'); opts.forEach(([k, t]) => s.append(el('option', { value: k, textContent: t, selected: k === v }))); return s; };
   const num = (v, min, max) => el('input', { type: 'number', value: v, min, max, style: 'width:64px' });
   const inBattle = () => G.scr === 'battle' && B && B.surv && !B.over;
+  const tstDef = () => ({ dmg: 0, taken: 0, more: 1, aspd: 0, crit: 0, critd: 0, reach: 0 }); TST = tstDef();
+  // a monster, or a dummy that never moves, hits or dies (d.at: [x, y] for a single one)
+  const spawn = (key, kind, n, dummy) => { for(let i = 0; i < n; i++){ svSpawn(kind, key); const m = B.mons[B.mons.length - 1]; if(!m) continue;
+    if(dummy){ const d = dummy === true ? {} : dummy; m.name = '허수아비'; m.hp = m.max = d.hp || 1e13; m.spd = 0; m.dmg = 0; m.ai = 'none'; m.fast = false; m.dummy = 1; m.def = d.def != null ? d.def : 0; m.mdef = d.mdef != null ? d.mdef : 0;
+      m.x = d.at ? d.at[0] : clamp(B.P.x + 60 + i * 26, 20, SV.ww - 20); m.y = d.at ? d.at[1] : clamp(B.P.y, SV.y0 + 20, SV.y0 + SV.wh - 20); } } };
+  // 테스트룸 입장: an empty field, natural spawns off, one unkillable dummy in the middle
+  const enter = () => { if(G.scr === 'battle' && B) leaveBattle(); G.modal = null; G.noSpawn = true; startSurv(1); B.mons = [];
+    const cx = SV.ww / 2, cy = SV.y0 + SV.wh / 2; B.P.x = cx - 80; B.P.y = cy; spawn('golem', 'normal', 1, { at: [cx, cy] }); P.style.display = 'none'; };
   const setWeapon = (line, lv) => { lv = clamp(lv | 0, 0, MAX); S.lv = lv; S.line = lineAt(line, lv); S.crack = 0; S.found[curId()] = 1; if(S.lv > S.best){ S.best = S.lv; S.bestId = curId(); } F.st = 'idle'; G.modal = null; };
   function build(){
     P.innerHTML = '';
     P.append(el('div', { className: 'row' }, [el('b', { textContent: '🧪 테스트룸' }), el('span', { className: 'note', textContent: ' 테스트 서버 전용 · 기록 안 올라감' }), bt('닫기', () => { P.style.display = 'none'; })]));
+    P.append(el('div', { className: 'row' }, [bt('테스트룸 입장', enter)]), el('div', { className: 'note', textContent: '몬스터 없이 시작, 가운데에 무적 허수아비 하나. 몬스터는 아래 「전투 중」에서 직접 소환.' }));
     // ---- 무기·직업
     P.append(el('h3', { textContent: '무기 · 직업 (지금: +' + S.lv + ' ' + wName(curId()) + ' · ' + WL[lineOf()].n + ')' }));
     const ls = sel(Object.keys(WL).map(k => [k, WL[k].n + ' (+' + WL[k].from + '~)']), S.line || 'c'), lvI = num(S.lv, 0, MAX);
@@ -5050,8 +5062,6 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
       P.append(el('div', { className: 'row' }, ['속도', ...[.1, .25, .5, 1, 2].map(v => bt(v + '×', () => { G.ts = v; }, (G.ts || 1) === v))]));
       // monsters
       const mk = sel(Object.keys(MON).filter(k => !/_[wbg]$/.test(k)).map(k => [k, k]), AREAS[B.ai].mons[0]), kd = sel([['normal', '일반'], ['elite', '엘리트'], ['boss', '보스']], 'normal'), cnt = num(1, 1, 30);
-      const spawn = (key, kind, n, dummy) => { for(let i = 0; i < n; i++){ svSpawn(kind, key); const m = B.mons[B.mons.length - 1]; if(!m) continue;
-        if(dummy){ const d = dummy === true ? {} : dummy; m.name = '허수아비'; m.hp = m.max = d.hp || 1e13; m.spd = 0; m.dmg = 0; m.ai = 'none'; m.fast = false; m.dummy = 1; m.def = d.def != null ? d.def : 0; m.mdef = d.mdef != null ? d.mdef : 0; m.x = clamp(B.P.x + 60 + i * 26, 20, SV.ww - 20); m.y = clamp(B.P.y, SV.y0 + 20, SV.y0 + SV.wh - 20); } } };
       P.append(el('div', { className: 'row' }, [mk, kd, cnt, bt('소환', () => spawn(mk.value, kd.value, +cnt.value))]));
       P.append(el('div', { className: 'row' }, [bt('허수아비 1 (방어 0)', () => spawn('golem', 'normal', 1, true)), bt('허수아비 5 (방어 0)', () => spawn('golem', 'normal', 5, true)), bt('몹 전부 제거', () => { B.mons = []; }), bt('스테이지 클리어', () => { B.endless ? enStageClear() : svStageClear(); }), bt('딜량표 초기화', () => { B.dsrc = {}; B.dmgDone = 0; })]));
       P.append(el('div', { className: 'note', textContent: '허수아비: 방어 0/0, 움직이지도 때리지도 않고 죽지 않음. 딜량표(오른쪽 위)로 DPS 확인.' }));
@@ -5059,6 +5069,14 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
       const dk = sel(Object.keys(MON).filter(k => !/_[wbg]$/.test(k)).map(k => [k, k]), 'golem'), dkd = sel([['normal', '일반'], ['elite', '엘리트'], ['boss', '보스']], 'normal'), dhp = el('input', { type: 'number', placeholder: '체력 (빈칸=무적)', style: 'width:110px' }), dd = num(0, -50, 2000), dm = num(0, -50, 2000), dn = num(1, 1, 10);
       P.append(el('div', { className: 'note', textContent: '커스텀 허수아비 · 모습 / 등급 / 체력 / 물리방어 / 마법방어 / 수 (방어 100 = 피해 절반)' }), el('div', { className: 'row' }, [dk, dkd, dhp, '물방', dd, '마방', dm, dn,
         bt('소환', () => spawn(dk.value, dkd.value, +dn.value, { hp: +dhp.value > 0 ? +dhp.value : 0, def: clamp(+dd.value || 0, -50, 2000), mdef: clamp(+dm.value || 0, -50, 2000) }))]));
+      // stats typed in directly, added on top of cards and enchants
+      P.append(el('h3', { textContent: '스탯 직접 조절 (카드·인챈트 위에 더해짐)' }));
+      const sg = el('div', { className: 'grid' });
+      [['dmg', '피해 증가 +%', 100], ['taken', '받는 피해 증가 +%', 100], ['more', '최종 피해 ×', 1], ['aspd', '공속 +%', 100], ['crit', '치명 확률 +%', 100], ['critd', '치명 피해 +% (×2 기준)', 100], ['reach', '범위 +%', 100]].forEach(([k, t, f]) => {
+        const i = el('input', { type: 'number', value: +(TST[k] * f).toFixed(3), step: f === 1 ? .1 : 10, style: 'width:64px' });
+        i.onchange = () => { TST[k] = (+i.value || 0) / f; if(k === 'more' && !(TST[k] > 0)) TST[k] = 1; build(); }; sg.append(el('span', { textContent: t }), i); });
+      P.append(sg, el('div', { className: 'row' }, [bt('스탯 초기화', () => { TST = tstDef(); })]),
+        el('div', { className: 'note', textContent: '지금: 피해 ×' + svDmgMul().toFixed(2) + ' · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 치명 ' + Math.round(Math.min(1, critChance()) * 100) + '% ×' + critMul().toFixed(1) + ' · 범위 ' + svR() + ' · 음수도 됨(약화)' }));
       // cards
       P.append(el('h3', { textContent: '전투 카드 · 융합' }));
       const cg = el('div', { className: 'grid' }); Object.keys(SVC).forEach(k => { const ok = SVC[k][3](), i = num(B.sk[k] || 0, 0, SVC[k][1]); i.disabled = !ok; i.onchange = () => { const v = clamp(+i.value | 0, 0, SVC[k][1]); if(v) B.sk[k] = v; else delete B.sk[k]; };

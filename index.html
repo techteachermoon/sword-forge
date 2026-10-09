@@ -3305,7 +3305,10 @@ function survUpdate(dt){
       const k = Math.min(1, dt * 14); if(Math.abs(m.tx - m.x) + Math.abs(m.ty - m.y) > 90){ m.x = m.tx; m.y = m.ty; } else { m.x += (m.tx - m.x) * k; m.y += (m.ty - m.y) * k; }
       continue; }
     if(m.hcd > 0) m.hcd -= dt;
-    m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; m.kx *= .8; m.ky *= .8;
+    if(m.kx || m.ky){ // knockback never throws a monster that is inside the map out of it
+      const e = (m.r || 8) + 2, x0 = e, x1 = SV.ww - e, y0 = SV.y0 + e, y1 = SV.y0 + SV.wh - e, inside = m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1;
+      m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; if(inside){ m.x = clamp(m.x, x0, x1); m.y = clamp(m.y, y0, y1); } }
+    m.kx *= .8; m.ky *= .8;
     if(m.kind === 'gold'){ m.life -= dt; if(m.life <= 0){ m.die = .001; m.fled = true; } }
     if(m.burnT > 0) m.burnT -= dt; if(m.poisonT > 0) m.poisonT -= dt; if(svDotTick(m, dt)) continue;
     if(m.slowT > 0) m.slowT -= dt; if(m.steam > 0) m.steam -= dt;

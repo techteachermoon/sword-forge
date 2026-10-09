@@ -3126,7 +3126,7 @@ function survUpdate(dt){
   // spawning
   if(!rep && (!B.boss || B.st > 2)){
     const alive = B.mons.filter(m => m.die === 0).length;
-    B.spawnT -= dt;
+    B.spawnT = G.noSpawn ? 9 : B.spawnT - dt; // G.noSpawn: 테스트룸
     if(B.endless){ // keep the field full: the faster they fall, the faster the next ones come (and the faster you climb)
       const pop = B.mp ? Math.min(110, Math.round(enPop(B.n) * (1 + .25 * (mpN() - 1)))) : enPop(B.n), cap = B.boss ? Math.round(pop * .4) : pop, lack = cap - alive; /* together: a bigger crowd so everyone has something to hit */
       if(lack > 0 && B.spawnT <= 0){
@@ -3188,6 +3188,7 @@ function survUpdate(dt){
   if(B.headPicks > 0 && !B.pick){ B.headPicks--; svLevelUp(); }
 }
 function svEvent(){ // pressure: a ring closes in, or a pack charges across
+  if(G.noSpawn) return;
   const P = B.P, A = AREAS[B.ai];
   if(Math.random() < .55){
     const n = 12 + B.ai * 2, r = Math.min(VW, SV.h) * .62;
@@ -3229,7 +3230,7 @@ function svDash(){
   B.dashV = [Math.cos(a) * sp, Math.sin(a) * sp]; B.dashT = .15; B.dashHit = new Set(); P.inv = Math.max(P.inv, .35); SFX.click();
 }
 function svHurt(m){
-  if(B.dead) return;
+  if(B.dead || G.god) return; // G.god: 테스트룸 무적
   const P = B.P;
   P.inv = .45;
   if(m.x != null && B.fam !== 'g'){ const d = Math.hypot(P.x - m.x, P.y - m.y) || 1; P.x = clamp(P.x + (P.x - m.x) / d * 7, 10, SV.ww - 10); P.y = clamp(P.y + (P.y - m.y) / d * 7, SV.y0 + 14, SV.y0 + SV.wh - 10); }
@@ -4771,7 +4772,7 @@ function gfxLabel(){ return GFXN[GQ()]; }
 function gfxNext(){ const order = ['high', 'mid', 'low'], i = order.indexOf(S.opts.gfx); S.opts.gfx = order[(i + 1) % 3]; G.af = null; save(); fit(); }
 function dmgNext(){ const order = ['all', 'crit', 'off'], i = order.indexOf(dmgMode()); S.opts.dmgNum = order[(i + 1) % 3]; save(); }
 function loop(now){
-  const raw = now - lastT, dt = Math.min(.05, Math.max(0, raw / 1000)); lastT = now; G.t += dt;
+  const raw = now - lastT, dt = Math.min(.05, Math.max(0, raw / 1000)) * (G.ts || 1); lastT = now; G.t += dt; // G.ts: 테스트룸 speed
   if(G.scr === 'battle' && B && !B.paused && !B.pick && !B.over) autoGfx(raw);
   if(MP.lobby) mpLobbyTick(dt);
   G.shake = REDUCED || S.opts.noShake || !GQ() ? 0 : Math.max(0, G.shake - dt * 18);
@@ -4818,6 +4819,74 @@ async function boot(data){
   const b = document.getElementById('boot'); if(b) b.remove();
   requestAnimationFrame(t => { lastT = t; loop(t); });
   rankInit();
+  if(TEST_SITE) testRoom();
+}
+// ===================== 테스트룸 (테스트 서버에서만): 무기·직업·인챈트·각인·전투 상황을 바로 바꿔 보는 패널 =====================
+function testRoom(){ if(document.getElementById('trBtn')) return;
+  const css = document.createElement('style'); css.textContent = `
+#trBtn{position:fixed;right:8px;bottom:84px;z-index:50;width:44px;height:44px;border-radius:22px;border:2px solid #ffd27a;background:#3a1a10;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 2px 8px #0008}
+#trP{position:fixed;right:0;top:0;bottom:0;width:min(340px,100vw);z-index:51;background:#1a120ef2;color:#efe2c8;font:13px/1.45 system-ui,sans-serif;overflow:auto;padding:10px 12px 40px;box-sizing:border-box;display:none;border-left:2px solid #5a3e2a}
+#trP h3{margin:14px 0 6px;font-size:14px;color:#ffd27a;border-bottom:1px solid #5a3e2a;padding-bottom:3px}
+#trP button{background:#3a281c;color:#efe2c8;border:1px solid #6a4a32;border-radius:5px;padding:5px 8px;margin:2px;font-size:12px;cursor:pointer}
+#trP button.on{background:#ff9a3d;color:#1a0e06}#trP select,#trP input{background:#0e0906;color:#efe2c8;border:1px solid #6a4a32;border-radius:4px;padding:4px;font-size:12px;margin:2px}
+#trP .row{display:flex;flex-wrap:wrap;align-items:center;gap:2px}#trP .note{color:#a8977e;font-size:11px}#trP .grid{display:grid;grid-template-columns:1fr 54px;gap:2px 6px;align-items:center}`;
+  document.head.appendChild(css);
+  const btn = document.createElement('button'); btn.id = 'trBtn'; btn.textContent = '🧪'; btn.title = '테스트룸'; document.body.appendChild(btn);
+  const P = document.createElement('div'); P.id = 'trP'; document.body.appendChild(P);
+  btn.onclick = () => { P.style.display = P.style.display === 'block' ? 'none' : 'block'; if(P.style.display === 'block') build(); };
+  const el = (tag, attrs, kids) => { const e = document.createElement(tag); Object.assign(e, attrs || {}); (kids || []).forEach(k => e.append(k)); return e; };
+  const bt = (t, fn, on) => el('button', { textContent: t, className: on ? 'on' : '', onclick: () => { try{ fn(); }catch(e){ toast('테스트룸 오류: ' + e.message); } save(); build(); } });
+  const sel = (opts, v) => { const s = el('select'); opts.forEach(([k, t]) => s.append(el('option', { value: k, textContent: t, selected: k === v }))); return s; };
+  const num = (v, min, max) => el('input', { type: 'number', value: v, min, max, style: 'width:64px' });
+  const inBattle = () => G.scr === 'battle' && B && B.surv && !B.over;
+  const setWeapon = (line, lv) => { lv = clamp(lv | 0, 0, MAX); S.lv = lv; S.line = lv < 10 ? 'c' : lineAt(line, lv) === line || WL[line].from <= lv ? line : lineAt(line, lv); S.crack = 0; S.found[curId()] = 1; if(S.lv > S.best){ S.best = S.lv; S.bestId = curId(); } F.st = 'idle'; G.modal = null; };
+  function build(){
+    P.innerHTML = '';
+    P.append(el('div', { className: 'row' }, [el('b', { textContent: '🧪 테스트룸' }), el('span', { className: 'note', textContent: ' 테스트 서버 전용 · 기록 안 올라감' }), bt('닫기', () => { P.style.display = 'none'; })]));
+    // ---- 무기·직업
+    P.append(el('h3', { textContent: '무기 · 직업 (지금: +' + S.lv + ' ' + wName(curId()) + ' · ' + WL[lineOf()].n + ')' }));
+    const ls = sel(Object.keys(WL).map(k => [k, WL[k].n + ' (+' + WL[k].from + '~)']), S.line || 'c'), lvI = num(S.lv, 0, MAX);
+    P.append(el('div', { className: 'row' }, [ls, lvI, bt('적용', () => setWeapon(ls.value, +lvI.value)), bt('-1', () => setWeapon(S.line, S.lv - 1)), bt('+1', () => setWeapon(S.line, S.lv + 1))]));
+    P.append(el('div', { className: 'note', textContent: '직업은 강화 단계에 맞아야 함: 대검/단도/마검 +10~, 2차 직업 +20~. 칼날 속성은 무기에 따라 정해짐: ' + FXE[wfx(curId())][0] }));
+    // ---- 인챈트
+    P.append(el('h3', { textContent: '인챈트' }));
+    const eg = el('div', { className: 'grid' }); Object.keys(ENCH).forEach(k => { const i = num(en(k), 0, ENCH[k][3]); i.onchange = () => { const v = clamp(+i.value | 0, 0, ENCH[k][3]); if(v) S.ench[k] = v; else delete S.ench[k]; save(); }; eg.append(el('span', { textContent: ENCH[k][0] + ' (최대 ' + ENCH[k][3] + ')' }), i); });
+    P.append(eg, el('div', { className: 'row' }, [bt('인챈트 전부 최대', () => { Object.keys(ENCH).forEach(k => S.ench[k] = ENCH[k][3]); }), bt('인챈트 비우기', () => { S.ench = {}; }), bt('인챈트 고르기 +1', () => { S.enchPend = (S.enchPend || 0) + 1; })]));
+    // ---- 각인
+    P.append(el('h3', { textContent: '속성 각인 (1·2·3차)' }));
+    const es = [0, 1, 2].map(i => sel([['', '빈칸']].concat(ELK.map(k => [k, ELS[k][0]])), (S.eng || [])[i] || ''));
+    P.append(el('div', { className: 'row' }, [...es, bt('적용', () => { S.eng = es.map(s => s.value || null); engrSync(); })]), el('div', { className: 'row' }, [bt('각인석 전부 +5', () => { S.est = S.est || {}; ELK.forEach(k => [1, 2, 3].forEach(t => S.est[k + t] = (S.est[k + t] || 0) + 5)); })]));
+    // ---- 재화
+    P.append(el('h3', { textContent: '재화' }), el('div', { className: 'row' }, [bt('골드 +1억', () => { S.gold += 1e8; }), bt('골드 +100억', () => { S.gold += 1e10; }), bt('파편 +1000', () => { S.sh = (S.sh || 0) + 1000; }), bt('별조각 +100', () => { S.st = (S.st || 0) + 100; })]));
+    // ---- 전투 시작
+    P.append(el('h3', { textContent: '전투 시작' }));
+    const ds = sel(Object.keys(DIFF).map(k => [k, DIFF[k][0]]), curDiff()), ss = sel(Array.from({ length: NST }, (_, i) => [String(i + 1), stLabel(i + 1)]), '1');
+    P.append(el('div', { className: 'row' }, [ds, ss, bt('원정 시작', () => { if(G.scr === 'battle' && B) leaveBattle(); S.opts.diff = ds.value; G.modal = null; startSurv(+ss.value); P.style.display = 'none'; })]));
+    const ts = sel(Object.keys(ENT).map(k => [k, ENT[k][0]]), 'tough'), fl = num(1, 1, 500);
+    P.append(el('div', { className: 'row' }, [ts, fl, bt('무한 도전 시작', () => { if(G.scr === 'battle' && B) leaveBattle(); G.modal = null; startEndless(ts.value); let g2 = 0; while(B.n < +fl.value && g2++ < 600){ B.boss = false; enStageClear(); } B.pick = null; B.headPicks = 0; P.style.display = 'none'; })]));
+    P.append(el('div', { className: 'note', textContent: '층 번호가 5의 배수면 보스 층' }));
+    // ---- 전투 중
+    P.append(el('h3', { textContent: '전투 중' + (inBattle() ? '' : ' (전투에 들어가면 사용 가능)') }));
+    if(!inBattle()){ P.append(el('div', { className: 'note', textContent: '위에서 전투를 시작하세요.' })); }
+    else {
+      P.append(el('div', { className: 'row' }, [bt('무적 ' + (G.god ? 'ON' : 'OFF'), () => { G.god = !G.god; }, G.god), bt('체력 가득', () => { B.P.hp = B.P.max; }), bt('체력 10%', () => { B.P.hp = Math.max(1, Math.round(B.P.max * .1)); }), bt('필살 가득', () => { B.fev = 100; }), bt('자연 스폰 ' + (G.noSpawn ? '멈춤' : '켜짐'), () => { G.noSpawn = !G.noSpawn; }, G.noSpawn), bt('카드 고르기', () => svLevelUp())]));
+      P.append(el('div', { className: 'row' }, ['속도', ...[.1, .25, .5, 1, 2].map(v => bt(v + '×', () => { G.ts = v; }, (G.ts || 1) === v))]));
+      // monsters
+      const mk = sel(Object.keys(MON).filter(k => !/_[wbg]$/.test(k)).map(k => [k, k]), AREAS[B.ai].mons[0]), kd = sel([['normal', '일반'], ['elite', '엘리트'], ['boss', '보스']], 'normal'), cnt = num(1, 1, 30);
+      const spawn = (key, kind, n, dummy) => { for(let i = 0; i < n; i++){ svSpawn(kind); const m = B.mons[B.mons.length - 1]; if(!m) continue; m.key = key; m.r = Math.max(4, MON[key].width * m.sc / 2 - 1);
+        if(dummy){ m.name = '허수아비'; m.hp = m.max = 1e13; m.spd = 0; m.dmg = 0; m.ai = 'none'; m.fast = false; m.dummy = 1; m.x = clamp(B.P.x + 60 + i * 26, 20, SV.ww - 20); m.y = clamp(B.P.y, SV.y0 + 20, SV.y0 + SV.wh - 20); } } };
+      P.append(el('div', { className: 'row' }, [mk, kd, cnt, bt('소환', () => spawn(mk.value, kd.value, +cnt.value))]));
+      P.append(el('div', { className: 'row' }, [bt('허수아비 1', () => spawn('golem', 'normal', 1, true)), bt('허수아비 5', () => spawn('golem', 'normal', 5, true)), bt('몹 전부 제거', () => { B.mons = []; }), bt('스테이지 클리어', () => { B.endless ? enStageClear() : svStageClear(); }), bt('딜량표 초기화', () => { B.dsrc = {}; B.dmgDone = 0; })]));
+      P.append(el('div', { className: 'note', textContent: '허수아비: 움직이지도 때리지도 않고 죽지 않음. 딜량표(오른쪽 위)로 DPS 확인.' }));
+      // cards
+      P.append(el('h3', { textContent: '전투 카드 · 융합' }));
+      const cg = el('div', { className: 'grid' }); Object.keys(SVC).forEach(k => { const ok = SVC[k][3](), i = num(B.sk[k] || 0, 0, SVC[k][1]); i.disabled = !ok; i.onchange = () => { const v = clamp(+i.value | 0, 0, SVC[k][1]); if(v) B.sk[k] = v; else delete B.sk[k]; };
+        cg.append(el('span', { textContent: SVC[k][0] + (ok ? '' : ' (이 직업 불가)'), style: ok ? '' : 'color:#6e604e' }), i); });
+      P.append(cg, el('div', { className: 'row' }, [bt('가능한 카드 전부 최대', () => { Object.keys(SVC).forEach(k => { if(SVC[k][3]()) B.sk[k] = SVC[k][1]; }); }), bt('카드 비우기', () => { B.sk = {}; B.fus = {}; B.up = {}; })]));
+      const fz = el('div', { className: 'row' }); Object.keys(FUS).forEach(f => fz.append(bt(FUS[f][0] + (B.fus[f] ? ' ✓' : ''), () => { if(B.fus[f]) delete B.fus[f]; else B.fus[f] = 1; }, !!B.fus[f])));
+      P.append(el('div', { className: 'note', textContent: '융합 (켜고 끄기 · 위력은 두 속성 값에 비례)' }), fz);
+    }
+  }
 }
 window.claude?.hot?.snapshot?.(() => ({ S, scr: G.scr === 'battle' ? 'game' : G.scr, tab: G.tab }));
 window.claude?.hot?.ready ? window.claude.hot.ready(boot) : boot(window.claude?.hot?.data ?? {});

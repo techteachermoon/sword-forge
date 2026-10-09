@@ -2401,7 +2401,7 @@ function mpFxIn(o, fx){
     else if(k === 'f') B.fields.push({ x: e[1], y: e[2], r: e[3], t: e[4], tick: .5, rm: 1 });
     else if(k === 's'){ if(B.shots.length < 160) B.shots.push({ x: e[1], y: e[2], vx: e[3], vy: e[4], dag: !!(e[5] & 1), big: !!(e[5] & 2), life: e[6], a: e[7], hit: new Set(), pierce: e[8] || 0, col, rm: 1 }); }
     else if(k === 'w' && Array.isArray(e[1])){ (o.swq = o.swq || []).push({ arcs: e[1], R: e[2], dur: e[3] || .15, spins: e[4] || 1, t: 0 }); if(o.swq.length > 4) o.swq.shift(); }
-    else if(k === 'd'){ const crit = !!(e[4] & 1); B.nums.push({ x: e[1] + (Math.random() - .5) * 8, y: e[2], v: fmtK(e[3]), crit, ci: crit, t: 0, c: e[5] || numCol(e[4] & 4 ? 'magic' : 'phys', crit), small: !!(e[4] & 2), dn: 1 });
+    else if(k === 'd'){ const crit = !!(e[4] & 1); B.nums.push({ x: e[1] + (Math.random() - .5) * 8, y: e[2], v: fmtK(e[3]), crit, ci: crit, t: 0, c: e[5] || numCol(e[4] & 8 ? 'true' : e[4] & 4 ? 'magic' : 'phys', crit), small: !!(e[4] & 2), dn: 1 });
       if(!(e[4] & 2) && GQ()){ B.hits = B.hits || []; if(B.hits.length < 48) B.hits.push({ x: e[1], y: e[2] + 6, t: 0, crit, c: crit ? '#ffe070' : '#ffffff', a: Math.random() * 3.14 }); if(crit){ B.stars = B.stars || []; B.stars.push({ x: e[1], y: e[2] + 6, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } } }
     else if(k === 'g') o.dashT = .18;
     else if(k === 'v'){ G.flash = Math.max(G.flash || 0, .2); G.flashC = '#fff2c8'; G.shake = Math.max(G.shake, 4); SFX.boom(); B.nums.push({ x: o.x, y: o.y - 34, v: '필살!', crit: true, t: 0, c: '#ffe070', big: true }); for(let q = 0; q < 40; q++){ const an = q / 40 * 6.28; G.parts.push({ x: o.x, y: o.y - 4, vx: Math.cos(an) * 150, vy: Math.sin(an) * 110, life: .5, max: .5, c: q % 2 ? '#ffe070' : '#ffffff', grav: 0, sz: 2 }); } }
@@ -2409,14 +2409,14 @@ function mpFxIn(o, fx){
   }
 }
 const mpAnchor = () => { const c = mpPeers(), i = Math.floor(Math.random() * (c.length + 1)); return i < c.length ? c[i] : null; }; // host: new monsters come in around a random player
-function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y), hurtTy(src) === 'magic' ? 1 : 0]); }
+function mpHurt(o, dmg, src){ if(MP.hurts.length < 60) MP.hurts.push([o.id, dmg, Math.round(src.x), Math.round(src.y), tyCode(hurtTy(src))]); }
 const mpMe = () => ({ wid: B.wid, wc: B.wcol, mv: meMoving() && !B.dead ? 1 : 0, ob: (B.orbs || []).length, au: sk('aura') && !B.dead ? 1 : 0, shd: B.shield && !B.dead ? 1 : 0, v: MP_VER, dead: !!(B.over || B.dead), st: B.pick ? 1 : B.paused ? 2 : 0, dm: Math.round(B.dmgDone || 0), nm: S.name, ln: B.line, x: Math.round(B.P.x), y: Math.round(B.P.y), f: B.P.fx < 0 ? -1 : 1, hp: Math.round(B.P.hp / B.P.max * 100), n: B.n, t0: MP.t0 });
 function mpSnap(){
   const r1 = v => Math.round(v * 10) / 10;
   return Object.assign(mpMe(), { ep: MP.ep, pr: r1(B.pr), nd: B.need, bo: B.boss ? 1 : 0, bt: B.bossOut ? 1 : 0, hu: MP.hurts.splice(0),
     ms: B.mons.filter(m => m.die === 0 && m.nid).map(m => [m.nid, m.key, Math.max(0, MP_KIND.indexOf(m.kind)), Math.round(m.x), Math.round(m.y), Math.ceil(m.hp), Math.ceil(m.max), m.face < 0 ? -1 : 1,
       (m.fast ? 1 : 0) | (m.slowT > 0 ? 2 : 0) | (m.stun > 0 ? 4 : 0) | (m.burnT > 0 ? 8 : 0) | (m.poisonT > 0 ? 16 : 0) | (m.mini ? 32 : 0) | (m.hitT > 0 ? 64 : 0), m.ai, r1(m.sc), m.dmg, Math.round(m.spd), Math.round(m.def || 0), m.act || 0, r1(m.actT || 0), r1(m.da || 0), r1(Math.min(.35, m.born)), Math.round(m.mdef ?? m.def ?? 0)]),
-    es: B.eshots.slice(0, 60).map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.dmg, e.ty === 'magic' ? 1 : 0]) });
+    es: B.eshots.slice(0, 60).map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.dmg, tyCode(e.ty)]) });
 }
 // everyone but the host: copy the host's field
 function mpWorld(p){
@@ -2446,8 +2446,8 @@ function mpWorld(p){
     if(fl & 2) m.slowT = Math.max(m.slowT, .2); if(fl & 4) m.stun = Math.max(m.stun, .2); if(fl & 8) m.burnT = Math.max(m.burnT, .2); if(fl & 16) m.poisonT = Math.max(m.poisonT, .2);
   }
   for(const m of B.mons) if(m.die === 0 && m.nid && !seen.has(m.nid)){ m.die = .001; m.hp = 0; killFx(m); } // gone on the host: someone got it
-  B.eshots = (p.es || []).map(([x, y, vx, vy, dmg, mg]) => ({ x, y, vx, vy, life: 3, dmg, ty: mg ? 'magic' : 'phys' }));
-  for(const h of p.hu || []) if(h[0] === MP.me && !B.over && B.P.inv <= 0) svHurt({ dmg: h[1], x: h[2], y: h[3], ty: h[4] ? 'magic' : 'phys' });
+  B.eshots = (p.es || []).map(([x, y, vx, vy, dmg, mg]) => ({ x, y, vx, vy, life: 3, dmg, ty: TYC[mg] || 'phys' }));
+  for(const h of p.hu || []) if(h[0] === MP.me && !B.over && B.P.inv <= 0) svHurt({ dmg: h[1], x: h[2], y: h[3], ty: TYC[h[4]] || 'phys' });
   for(const [nid, t] of MP.killed) if(G.t - t > 3) MP.killed.delete(nid);
 }
 function mpFloor(p){
@@ -2708,7 +2708,8 @@ const MST = { slime: [22, .9], shroom: [17, 1.2], bat: [54, .55], spider: [44, .
 const ESHOT_C = ['#a8ff7a', '#c58bff', '#c8a070', '#e8e0d0', '#ff7a2a', '#ff5a4a'];
 // monster attacks are 물리 or 마법 too: [body contact, shot]. p = physical (claws, blades, arrows), m = magic (spores, spirit touch, fire, spells)
 const MATK = { shroom: 'mp', ghost: 'mm', imp: 'pm', drake: 'pm', b_drake: 'mm', wisp: 'mm', fwisp: 'mm', mslime: 'mm', b_skel: 'mm', b_golem: 'pm', cslime: 'pm' };
-const monAtk = (key, shot) => ((MATK[key] || 'pp')[shot ? 1 : 0] === 'm' ? 'magic' : 'phys');
+const monAtk = (key, shot) => ({ m: 'magic', t: 'true' })[(MATK[key] || 'pp')[shot ? 1 : 0]] || 'phys'; // p 물리, m 마법, t 고정
+const TYC = ['phys', 'magic', 'true'], tyCode = ty => Math.max(0, TYC.indexOf(ty)); // damage type over the wire: 0 물리, 1 마법, 2 고정
 const hurtTy = src => src.ty || (src.key ? monAtk(src.key, false) : 'phys');
 function eShoot(m, a, sp){ B.eshots.push({ x: m.x, y: m.y - m.r * .6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 3, dmg: Math.round(m.dmg * .8), ty: monAtk(m.key, true) }); }
 const BOOM_R = 40;
@@ -2794,7 +2795,7 @@ function dmList(x, y, w, n, big){ // big: two lines per attack with hit count, c
     g.globalAlpha = big ? .55 : .5; R(x, yy + 1, Math.max(1, Math.round(w * r.v / top)), big ? 11 : 10, mixc(c, '#000000', .45)); g.globalAlpha = 1;
     T(big ? r.k : r.k.replace(/ \(.*\)$/, '').slice(0, 8), x + 2, yy, { f: 's', c: i === 0 ? '#ffe070' : COL.text, ol: COL.ink });
     T(fmtK(Math.round(r.v)) + ' · ' + Math.round(r.v / tot * 100) + '%', x + w - 1, yy, { f: 's', a: 'r', c: c, ol: COL.ink });
-    if(big) T((r.ty === 'magic' ? '마법' : '물리') + ' · 타격 ' + fmt(r.n) + '회' + (r.c ? ' · 치명 ' + Math.round(r.c / r.n * 100) + '%' : '') + ' · 1회 평균 ' + fmtK(Math.round(r.v / Math.max(1, r.n))), x + 8, yy + 12, { f: 's', c: COL.dim }); });
+    if(big) T((TYN[r.ty] || '물리') + ' · 타격 ' + fmt(r.n) + '회' + (r.c ? ' · 치명 ' + Math.round(r.c / r.n * 100) + '%' : '') + ' · 1회 평균 ' + fmtK(Math.round(r.v / Math.max(1, r.n))), x + 8, yy + 12, { f: 's', c: COL.dim }); });
 }
 function dmTotals(x, y){ const D = (B && B.dsrc) || {}; let a = 0, b = 0; for(const k in D){ a += D[k].d; b += D[k].b; }
   T('총 ' + fmtK(Math.round(a)) + '  ·  잡몹 ' + fmtK(Math.round(a - b)) + '  ·  보스 ' + fmtK(Math.round(b)), x, y, { f: 's', c: COL.gold, ol: COL.ink }); }
@@ -2811,10 +2812,14 @@ function dmWidget(vy){ // a small see-through table in the corner, folds to one 
 function dRec(m, src, amt, crit, ty){ if(!(amt > 0) || !B) return; const D = B.dsrc || (B.dsrc = {}), r = D[src] || (D[src] = { d: 0, b: 0, n: 0, c: 0, ty: ty || dType({ src }) }); r.d += amt; if(m.kind === 'boss') r.b += amt; r.n++; if(crit) r.c++; }
 // every hit is 물리 (phys) or 마법 (magic), told by where it came from. 치명타: physical basic attacks only. Base chance 0, except the dagger family; ×2 for everyone
 const DTYPE_MAGIC = /마법|점멸|번개|불길|화상|중독|빛기둥|융합|성역|심판|처치 폭발|몬스터 폭발|오류|메아리/;
-const NUMC = { phys: ['#ffd0a0', '#ff7a1a'], magic: ['#a8b8ff', '#6a6aff'] }; // [normal, critical]: physical warm, magic blue; a crit is a deeper shade
+const NUMC = { phys: ['#ffd0a0', '#ff7a1a'], magic: ['#a8b8ff', '#6a6aff'], true: ['#ffffff', '#fff2c0'] }; // [normal, critical]: physical warm, magic blue, 고정 white; a crit is a deeper shade
+const TYN = { phys: '물리', magic: '마법', true: '고정' };
 const numCol = (ty, crit) => (NUMC[ty] || NUMC.phys)[crit ? 1 : 0];
 const ELEM_SRC = /속성|지속|융합/; // element damage scales off whichever attack is higher, until elements get their own rules
-const atkFor = o => { const st = o.stat || (ELEM_SRC.test(o.src || '') ? 'best' : dType(o)), p = pAtk(S.lv, B.line), q = mAtk(S.lv, B.line); return st === 'magic' ? q : st === 'best' ? Math.max(p, q) : p; };
+// which attack a hit scales off: 'phys' 물공, 'magic' 마공, 'best' the higher, 'weapon' the bare 무기 공격력 (고정 피해 default)
+const atkFor = o => { const ty = dType(o), st = o.stat || (ty === 'true' ? 'weapon' : ELEM_SRC.test(o.src || '') ? 'best' : ty), p = pAtk(S.lv, B.line), q = mAtk(S.lv, B.line); return st === 'weapon' ? ATK(S.lv) : st === 'magic' ? q : st === 'best' ? Math.max(p, q) : p; };
+// the armour a hit meets: 물리 → physical, 마법 → magic, 고정 → none
+const armOf = (m, ty) => ty === 'true' ? 0 : ((ty === 'magic' ? m.mdef : m.def) ?? m.def ?? 0);
 const dType = (o) => o.ty || (o.src === '필살기' ? (B.cls === 'magic' ? 'magic' : 'phys') : DTYPE_MAGIC.test(o.src || '') ? 'magic' : 'phys');
 const critChance = () => (B.fam === 't' ? TWIN_CRIT : 0) + en('crit') * .07 + (B.fx === 'moon' ? .1 : B.fx === 'rainbow' ? .05 : 0) + (tr('crit') ? .1 : 0);
 const critMul = () => 2 + (B.fx === 'stars' ? .5 : 0) + sk('vital') * .5 + (tr('crit') ? .8 : 0);
@@ -2829,7 +2834,7 @@ function svHit(m, base, o = {}){
   if(fx === 'serrate'){ m.ser++; mult *= 1 + Math.min(.5, (m.ser - 1) * .1); }
   if(m.slowT > 0) mult *= 1 + E('ice') * .05;
   if(sk('blood') && !o.dot) mult *= 1 + sk('blood') * .35;
-  let dmg = Math.max(1, Math.round(atkFor(o) * mult * armF((ty === 'magic' ? m.mdef : m.def) ?? m.def ?? 0))); // 물리 → physical armour, 마법 → magic armour
+  let dmg = Math.max(1, Math.round(atkFor(o) * mult * armF(armOf(m, ty)))); // 물리 → physical armour, 마법 → magic armour, 고정 → none
   if(fx === 'stick' && !o.dot && m.kind !== 'boss' && Math.random() < .08){ dmg = Math.max(dmg, m.hp); B.nums.push({ x: m.x, y: m.y - m.r - 16, v: '자연!', crit: true, t: 0, c: '#b8f0a0' }); }
   if(o.exec && B.line === 't1' && m.hp / m.max <= (m.kind === 'boss' ? .08 : .3) + (tr('t1_exec') ? .15 : 0)){ dmg = Math.max(dmg, m.hp); B.nums.push({ x: m.x, y: m.y - m.r - 16, v: '처형!', crit: true, t: 0, c: '#c58bff' }); }
   if(B.line === 't2' && !o.dot && !o.depth && !o.orb && !B.feverLock){ B.dance++; if(B.dance >= 10 - sk('volley') * 2){ B.dance = 0; svVolley(); SFX.success(14); B.nums.push({ x: B.P.x, y: B.P.y - 24, v: '칼날 비!', crit: true, t: 0, c: '#ff8ad8' }); } }
@@ -2840,7 +2845,7 @@ function svHit(m, base, o = {}){
   if(!o.dot){ for(let i = 0; i < (crit ? 4 : 2); i++){ const a = Math.random() * 6.28; G.parts.push({ x: m.x, y: m.y - m.r * .5, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: .18, max: .18, c: crit ? '#ffe070' : '#ffffff', grav: 220, streak: 1 }); } if(crit){ G.shake = Math.max(G.shake, 1.5); B.stars = B.stars || []; if(GQ()) B.stars.push({ x: m.x, y: m.y - m.r * .5, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } }
   if(o.kb){ const d = Math.hypot(m.x - B.P.x, m.y - B.P.y) || 1, k = (m.kind === 'boss' ? .2 : 1) * (tr('g_storm') ? 2 : 1); m.kx += (m.x - B.P.x) / d * o.kb * k; m.ky += (m.y - B.P.y) / d * o.kb * k; }
   B.nums.push({ x: m.x + (Math.random() - .5) * 8, y: m.y - m.r - 4, v: fmtK(dmg), crit, ci: crit, t: 0, c: numCol(ty, crit), small: !!o.dot, dn: 1 });
-  if(B.mp){ MP.dn = MP.dn || []; MP.dn.push(['d', Math.round(m.x), Math.round(m.y - m.r - 4), dmg, (crit ? 1 : 0) | (o.dot ? 2 : 0) | (ty === 'magic' ? 4 : 0), '']); if(MP.dn.length > 40) MP.dn.shift(); } /* friends see my numbers too */ /* dn: a damage number (설정 → 데미지 숫자) */
+  if(B.mp){ MP.dn = MP.dn || []; MP.dn.push(['d', Math.round(m.x), Math.round(m.y - m.r - 4), dmg, (crit ? 1 : 0) | (o.dot ? 2 : 0) | (ty === 'magic' ? 4 : 0) | (ty === 'true' ? 8 : 0), '']); if(MP.dn.length > 40) MP.dn.shift(); } /* friends see my numbers too */ /* dn: a damage number (설정 → 데미지 숫자) */
   if(sk('leech') && !o.dot){ if(B.t - (B.leechT || 0) >= 1){ B.leechT = B.t; B.leechN = 0; } const h = Math.min(.5 * sk('leech'), sk('leech') * 3 - (B.leechN || 0)); if(h > 0){ B.leechN = (B.leechN || 0) + h; B.P.hp = Math.min(B.P.max, B.P.hp + h); } }
   const depth = o.depth || 0;
   if(!o.dot && !o.noProc && depth < 4){
@@ -3263,7 +3268,7 @@ function svHurt(m){
   B.ouch = { t: 0 }; SFX.ouch(); if(P.hp > 0 && P.hp < P.max * .3) setTimeout(() => SFX.heart(), 230);
   try{ if(sfxOn() && navigator.vibrate) navigator.vibrate([45, 35, 45]); }catch(_){}
   for(let i = 0; i < 10; i++){ const a = Math.random() * 6.28, v = 60 + Math.random() * 70; G.parts.push({ x: P.x, y: P.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 30, life: .35, max: .35, c: i % 3 ? '#ff3a2a' : '#ffffff', grav: 200, sp: 1 }); }
-  B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: hurtTy(m) === 'magic' ? '#d070ff' : '#ff5a4a' }); // 물리 red, 마법 violet
+  B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: { magic: '#d070ff', true: '#ffd8d8' }[hurtTy(m)] || '#ff5a4a' }); // 물리 red, 마법 violet, 고정 pale
   if(P.hp <= 0) loseBattle('hp');
 }
 const meMoving = () => !!(B.joy || KEYS.a || KEYS.d || KEYS.w || KEYS.s || KEYS.ArrowLeft || KEYS.ArrowRight || KEYS.ArrowUp || KEYS.ArrowDown);

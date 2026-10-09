@@ -918,8 +918,10 @@ function audioInit(){
     const C = window.AudioContext || window.webkitAudioContext; if(!C) return;
     const a = AU.ctx = new C();
     const comp = a.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.connect(a.destination);
-    AU.sfx = a.createGain(); AU.sfx.gain.value = .9; AU.sfx.connect(comp);
-    AU.bgm = a.createGain(); AU.bgm.gain.value = .0; AU.bgm.connect(comp);
+    AU.duck = a.createGain(); AU.duck.connect(comp); // everything else dips for a moment when I get hit
+    AU.sfx = a.createGain(); AU.sfx.gain.value = .9; AU.sfx.connect(AU.duck);
+    AU.hurt = a.createGain(); AU.hurt.gain.value = .85; AU.hurt.connect(a.destination); // the hurt sound skips the compressor so a busy fight can't swallow it
+    AU.bgm = a.createGain(); AU.bgm.gain.value = .0; AU.bgm.connect(AU.duck);
     const mk = duty => { const n = 48, re = new Float32Array(n), im = new Float32Array(n); for(let i = 1; i < n; i++){ im[i] = 2 / (i * Math.PI) * Math.sin(i * Math.PI * duty); } return a.createPeriodicWave(re, im); };
     AU.pulse25 = mk(.25); AU.pulse12 = mk(.125);
     const len = a.sampleRate * 1.5; AU.noiseBuf = a.createBuffer(1, len, a.sampleRate); const ch = AU.noiseBuf.getChannelData(0); for(let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
@@ -961,7 +963,10 @@ const SFX = {
   coin(){ if(!sfxOn()) return; osc(988, .06, { wave: 'p25', g: .05 }); osc(1319, .2, { wave: 'p25', g: .05, w: .06 }); },
   buy(){ if(!sfxOn()) return; osc(660, .06, { wave: 'p25', g: .05 }); osc(880, .06, { wave: 'p25', g: .05, w: .05 }); osc(1320, .14, { wave: 'p25', g: .05, w: .1 }); },
   warp(){ if(!sfxOn()) return; osc(200, .7, { type: 'triangle', g: .1, slide: 8 }); for(let i = 0; i < 8; i++) osc(400 + i * 180, .05, { wave: 'p12', g: .03, w: i * .07 }); },
-  ouch(){ if(!sfxOn()) return; osc(740, .06, { wave: 'p25', g: .1, slide: .55 }); osc(370, .15, { wave: 'p25', g: .1, w: .055, slide: .6 }); osc(95, .18, { type: 'sine', g: .38, slide: .5 }); nz(.09, { lp: 700, g: .3 }); }, // I got hit: a falling two-note yelp and a thud, used for nothing else
+  ouch(){ if(!sfxOn() || !AU.ctx) return; const a = AU.ctx, t = a.currentTime, d = AU.hurt; // I got hit: a sharp two-beep alarm over a heavy thud, heard over everything else
+    AU.duck.gain.cancelScheduledValues(t); AU.duck.gain.setValueAtTime(.25, t); AU.duck.gain.linearRampToValueAtTime(1, t + .4);
+    osc(1046, .055, { wave: 'p12', g: .16, dest: d }); osc(698, .09, { wave: 'p12', g: .16, w: .065, dest: d });
+    osc(300, .16, { type: 'sawtooth', g: .09, slide: .4, dest: d }); osc(120, .24, { type: 'sine', g: .55, slide: .38, dest: d }); nz(.14, { lp: 1200, g: .45, dest: d }); },
   hit(){ if(!sfxOn()) return; nz(.06, { hp: 1500, g: .2 }); osc(180, .07, { type: 'square', g: .06, slide: .5 }); },
   crit(){ if(!sfxOn()) return; nz(.1, { hp: 2500, g: .25 }); osc(880, .1, { wave: 'p25', g: .06, slide: .5 }); osc(1760, .08, { wave: 'p12', g: .04 }); },
   die(){ if(!sfxOn()) return; osc(600, .25, { type: 'square', g: .06, slide: .2 }); nz(.2, { lp: 1200, g: .15 }); },

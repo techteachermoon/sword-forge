@@ -1,4 +1,22 @@
 -- 검 강화하기 랭킹 테이블 (Supabase → SQL Editor에 붙여 넣고 Run)
+-- 처음 설치할 때 공식 사이트 함수를 만들고, 재실행할 때 기존 허용 주소는 보존한다.
+do $setup$ begin
+  if to_regprocedure('public.from_official_site()') is null then
+    execute $create$
+create function public.from_official_site() returns boolean
+language sql stable as $origin$
+  select coalesce(current_setting('request.headers', true)::json->>'origin', '') in (
+    'https://swordforge.pages.dev',
+    'https://forgegame.pages.dev',
+    'https://techteachermoon.github.io'
+  )
+  -- Cloudflare 미리보기 주소(abc123.swordforge.pages.dev 등)도 허용
+  or coalesce(current_setting('request.headers', true)::json->>'origin', '') like 'https://%.swordforge.pages.dev'
+  or coalesce(current_setting('request.headers', true)::json->>'origin', '') like 'https://%.forgegame.pages.dev'
+$origin$;
+$create$;
+  end if;
+end; $setup$;
 create table if not exists public.scores (
   id uuid primary key default auth.uid() references auth.users on delete cascade,
   room text not null default '' check (char_length(room) <= 12),
@@ -28,6 +46,6 @@ alter table public.scores enable row level security;
 drop policy if exists "scores read" on public.scores;
 create policy "scores read" on public.scores for select using (true);
 drop policy if exists "scores insert own" on public.scores;
-create policy "scores insert own" on public.scores for insert with check (auth.uid() = id);
+create policy "scores insert own" on public.scores for insert with check (auth.uid() = id and public.from_official_site());
 drop policy if exists "scores update own" on public.scores;
-create policy "scores update own" on public.scores for update using (auth.uid() = id) with check (auth.uid() = id);
+create policy "scores update own" on public.scores for update using (auth.uid() = id) with check (auth.uid() = id and public.from_official_site());

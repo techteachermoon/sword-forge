@@ -28,10 +28,10 @@ const lc = document.createElement('canvas'); lc.width = VW; lc.height = VH;
 const g = lc.getContext('2d');
 g.imageSmoothingEnabled = false;
 let SCALE = 1, KX = 1;
-// graphics level: 2 high, 1 mid, 0 low. 'auto' (default) starts high and steps down when frames run slow (S.opts.autoQ)
+// graphics level: 2 high, 1 mid, 0 low. Only the player changes it; when frames run slow the game suggests it once (S.opts.gfxTip)
 const dmgMode = () => { const v = S.opts.dmgNum; return v === 'all' || v === 'crit' || v === 'off' ? v : GQ() ? 'all' : 'crit'; };
 const outlineN = () => S.opts.noOutline ? 0 : GQ() ? 4 : 2; /* sides drawn around elite/gold monsters */
-const GQ = () => { const o = typeof S !== 'undefined' && S && S.opts; if(!o) return 2; const v = o.gfx; return v === 'low' ? 0 : v === 'mid' ? 1 : v === 'high' ? 2 : (o.autoQ == null ? 2 : o.autoQ); };
+const GQ = () => { const o = typeof S !== 'undefined' && S && S.opts; if(!o) return 2; const v = o.gfx; return v === 'low' ? 0 : v === 'mid' ? 1 : 2; };
 
 function fit(){
   const aw = Math.max(200, document.documentElement.clientWidth || innerWidth), ah = Math.max(300, innerHeight || 600);
@@ -425,10 +425,59 @@ const MON_ART = {
 // third species per area (added): a wasp, and a will-o'-wisp that blows up
 MON_ART.bee = { m: 1, rows: ['.........K..', '..........K.', 'KKK......KKK', 'KWWK....KYYY', 'KWWWK..KYYYY', '.KWWWKKYYEEY', '..KWWKYYYEKY', '...KKKkkkkkk', '....KYYYYYYY', '....Kkkkkkkk', '.....KYYYYYY', '......KkkkkK', '..........KK'], pal: { K: '#1a1206', W: '#e8f4ff', Y: '#ffc83a', k: '#2a1a08', E: '#1a1206' } };
 MON_ART.wisp = { m: 1, rows: ['...........O', '..........OO', '.........OYY', '....O...OYYY', '...OO..OYYWW', '...OYOOYYWWW', '..OYYYYYWWWW', '..OYYKKYWWWW', '.OYYYKKYWWWW', '.OYYYYYYYWWW', '.ORYYYYYYYYY', '..ORRYYYYYYY', '...ORRRRRRRR', '....OOOOOOOO'], pal: { O: '#3a0a0a', Y: '#ff9a2a', W: '#fff2a0', R: '#d8401a', K: '#2a0a0a' } };
+// ---- monster shading, worked out once at start: colored outlines, light from the top left with hue-shifted
+// highlights (warmer) and shadows (cooler), a soft top-to-bottom dither, eye glints, a blink frame and a glow layer
+const MON_GLOW = { bat: 'R', spider: 'R', b_spider: 'R', skel: 'R', b_skel: 'R', golem: 'C', b_golem: 'C', imp: 'Y', drake: 'Y', b_drake: 'Y', wisp: '*', fwisp: '*', ghost: '*', mslime: 'W', cslime: 'W', wolf: 'Y', boar: 'Y', goblin: 'R', b_goblin: 'R' };
+const MON_FLY = { bat: 1, bee: 1, ghost: 1, wisp: 1, fwisp: 1, wyvern: 1 };
+const hdLum = h => { const [r, g2, b] = hex2rgb(h); return (.2126 * r + .7152 * g2 + .0722 * b) / 255; };
+function hdHsl(h){ const [r, g2, b] = hex2rgb(h).map(v => v / 255), mx = Math.max(r, g2, b), mn = Math.min(r, g2, b), L = (mx + mn) / 2; let H = 0, S2 = 0;
+  if(mx !== mn){ const d = mx - mn; S2 = L > .5 ? d / (2 - mx - mn) : d / (mx + mn); H = (mx === r ? (g2 - b) / d + (g2 < b ? 6 : 0) : mx === g2 ? (b - r) / d + 2 : (r - g2) / d + 4) * 60; } return [H, S2, L]; }
+const hdTo = (H, T, amt) => { const d = ((T - H + 540) % 360) - 180; return H + Math.sign(d) * Math.min(Math.abs(d), amt); };
+const hdCol = (H, S2, L) => hsl(((H % 360) + 360) % 360, clamp(S2, 0, 1) * 100, clamp(L, 0, 1) * 100);
+function hdShade(h, dl){ const [H, S2, L] = hdHsl(h); if(S2 < .08) return hdCol(H, S2, L + dl); return hdCol(hdTo(H, dl > 0 ? 55 : 255, Math.abs(dl) * 70), S2 + (dl < 0 ? .06 : -.02), L + dl); }
+function monHD(rows, pal, mirror, glowCh, blink){
+  let rs = mirror ? rows.map(r => r + r.split('').reverse().join('')) : rows.slice();
+  const h = rs.length, w = Math.max(...rs.map(r => r.length));
+  const ch = (x, y) => (y < 0 || y >= h || x < 0 || x >= rs[y].length || !pal[rs[y][x]]) ? '.' : rs[y][x];
+  const empty = c => c === '.', dark = c => !empty(c) && hdLum(pal[c]) < .16;
+  if(blink) rs = rs.map((r, y) => r.split('').map((c, x) => c === 'E' && ch(x, y - 1) !== 'E' && ch(x, y + 1) === 'E' ? (dark(ch(x, y - 1)) ? 'G' : ch(x, y - 1)) : c).join('')); // the eye's top row turns to skin: a shut eye
+  const isOut = (x, y) => dark(ch(x, y)) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => empty(ch(x + a, y + b)));
+  const body = (x, y) => { const c = ch(x, y); return !empty(c) && !dark(c); };
+  let top = h, bot = 0; for(let y = 0; y < h; y++) for(let x = 0; x < w; x++) if(body(x, y)){ top = Math.min(top, y); bot = Math.max(bot, y); }
+  const c = mkCanvas(w, h), x2 = c.getContext('2d'), glow = [];
+  for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){
+    const k = ch(x, y); if(empty(k)) continue; let col = pal[k];
+    if(isOut(x, y)){ const ns = []; for(let b = -1; b <= 1; b++) for(let a = -1; a <= 1; a++) if(body(x + a, y + b)) ns.push(hex2rgb(pal[ch(x + a, y + b)]));
+      if(ns.length){ const av = [0, 1, 2].map(i => ns.reduce((s2, v) => s2 + v[i], 0) / ns.length), [H, S2] = hdHsl(rgb2hex(av[0], av[1], av[2])); col = hdCol(hdTo(H, 255, 20), S2 * .9 + .1, body(x, y - 1) && !body(x, y + 1) ? .07 : .13); } }
+    else if(!dark(k)){
+      let dl = (!body(x, y - 1) ? .10 : 0) + (!body(x - 1, y) ? .05 : 0) - (!body(x, y + 1) ? .09 : 0) - (!body(x + 1, y) ? .04 : 0);
+      const t = (y - top) / Math.max(1, bot - top); dl += [.03, 0, -.04][clamp(Math.floor(t * 3 + BAYER[(y & 3) * 4 + (x & 3)] * .9 - .45), 0, 2)];
+      if(hdLum(col) > .85) dl = Math.min(dl, 0) * .5;
+      col = hdShade(col, dl);
+      if(glowCh && (glowCh === '*' || k === glowCh)) glow.push([x, y, pal[k]]);
+    }
+    x2.fillStyle = col; x2.fillRect(x, y, 1, 1);
+  }
+  if(!blink && pal.E && hdLum(pal.E) < .16){ x2.fillStyle = '#ffffff'; const E = (a, b) => ch(a, b) === 'E' && !isOut(a, b);
+    for(let y = 0; y < h; y++) for(let x = 0; x < w; x++) if(E(x, y) && E(x + 1, y) && E(x, y + 1) && E(x + 1, y + 1) && !E(x - 1, y) && !E(x, y - 1)) x2.fillRect(x, y, 1, 1); }
+  return { cv: c, glow };
+}
+function monGlow(sp, all){ // a soft light around the parts that shine; drawn with 'lighter'
+  const P5 = 5, c = mkCanvas(sp.cv.width + P5 * 2, sp.cv.height + P5 * 2), x = c.getContext('2d'); x.globalCompositeOperation = 'lighter';
+  sp.glow.forEach(([gx, gy, col]) => { if(all && (gx + gy) % 2) return; const r = all ? 4 : 3.5, cx = gx + P5 + .5, cy = gy + P5 + .5, gr = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    gr.addColorStop(0, col + (all ? '30' : '88')); gr.addColorStop(1, col + '00'); x.fillStyle = gr; x.fillRect(cx - r, cy - r, r * 2 + 1, r * 2 + 1); });
+  return c;
+}
 const MON = {};
+function monMake(k, rows, pal, m){
+  const gc = MON_GLOW[k], sp = monHD(rows, pal, m, gc);
+  MON[k] = sp.cv; MON[k + '_w'] = tint(MON[k], '#ffffff');
+  if(pal.E && hdLum(pal.E) < .16) MON[k + '_b'] = monHD(rows, pal, m, null, true).cv;
+  if(gc && sp.glow.length) MON[k + '_g'] = monGlow(sp, gc === '*');
+}
 function mkMonsters(){
-  for(const k in MON_ART){ const a = MON_ART[k]; MON[k] = spr(a.rows, a.pal, a.m); MON[k + '_w'] = tint(MON[k], '#ffffff'); }
-  const boss = (k, base, pal) => { const a = MON_ART[base]; MON[k] = spr(a.rows, Object.assign({}, a.pal, pal), a.m); MON[k + '_w'] = tint(MON[k], '#ffffff'); };
+  for(const k in MON_ART){ const a = MON_ART[k]; monMake(k, a.rows, a.pal, a.m); }
+  const boss = (k, base, pal) => { const a = MON_ART[base]; monMake(k, a.rows, Object.assign({}, a.pal, pal), a.m); };
   boss('b_slime', 'slime', { G: '#5ab8f0', g: '#2a6ab0', W: '#e8f8ff' });
   boss('b_spider', 'spider', { N: '#6a2a5a', n: '#3a1030', R: '#ffd040' });
   boss('b_goblin', 'goblin', { E: '#5a9a3a', e: '#2e5a1a', N: '#5a2a2a', n: '#3a1414', Y: '#ffd040' });
@@ -911,6 +960,7 @@ const SFX = {
   coin(){ if(!sfxOn()) return; osc(988, .06, { wave: 'p25', g: .05 }); osc(1319, .2, { wave: 'p25', g: .05, w: .06 }); },
   buy(){ if(!sfxOn()) return; osc(660, .06, { wave: 'p25', g: .05 }); osc(880, .06, { wave: 'p25', g: .05, w: .05 }); osc(1320, .14, { wave: 'p25', g: .05, w: .1 }); },
   warp(){ if(!sfxOn()) return; osc(200, .7, { type: 'triangle', g: .1, slide: 8 }); for(let i = 0; i < 8; i++) osc(400 + i * 180, .05, { wave: 'p12', g: .03, w: i * .07 }); },
+  ouch(){ if(!sfxOn()) return; osc(740, .06, { wave: 'p25', g: .1, slide: .55 }); osc(370, .15, { wave: 'p25', g: .1, w: .055, slide: .6 }); osc(95, .18, { type: 'sine', g: .38, slide: .5 }); nz(.09, { lp: 700, g: .3 }); }, // I got hit: a falling two-note yelp and a thud, used for nothing else
   hit(){ if(!sfxOn()) return; nz(.06, { hp: 1500, g: .2 }); osc(180, .07, { type: 'square', g: .06, slide: .5 }); },
   crit(){ if(!sfxOn()) return; nz(.1, { hp: 2500, g: .25 }); osc(880, .1, { wave: 'p25', g: .06, slide: .5 }); osc(1760, .08, { wave: 'p12', g: .04 }); },
   die(){ if(!sfxOn()) return; osc(600, .25, { type: 'square', g: .06, slide: .2 }); nz(.2, { lp: 1200, g: .15 }); },
@@ -1218,6 +1268,7 @@ function migrate(){ // v2 kept found as an array of levels; v3 keys it by weapon
   if(S.v < 3 || !WEP[S.bestId]) S.bestId = S.best >= 10 ? 'c:9' : 'c:' + S.best;
   if(!S.ench || typeof S.ench !== 'object' || Array.isArray(S.ench)) S.ench = {};
   if(!S.engr || typeof S.engr !== 'object' || Array.isArray(S.engr)) S.engr = {};
+  if(S.opts && !['low', 'mid', 'high'].includes(S.opts.gfx)){ S.opts.gfx = 'high'; delete S.opts.autoQ; } // the old 자동 mode lowered it by itself; that's the player's call now
   if(!S.est || typeof S.est !== 'object') S.est = {};
   if(!Array.isArray(S.eng) || (S.v < 5 && !S.eng.length)){ S.eng = []; for(const k of ELK) for(let n = 0; n < ((S.engr || {})[k] || 0) && S.eng.length < 3; n++) S.eng.push(k); } // old point engravings become slots
   S.eng = S.eng.slice(0, 3).map(k => ELS[k] ? k : null);
@@ -2459,7 +2510,11 @@ function heroSword(x, y, sw, wid, col, R0){
     const k = Math.min(1, sw.t / sw.dur);
     for(const [a0, span] of sw.arcs){
       const cur = a0 - span / 2 + span * (sw.spins || 1) * k;
-      const TJ = [4, 9, 16][GQ()]; for(let j = 0; j < TJ; j++){ const an = cur - j * .08 * 16 / TJ; g.globalAlpha = (1 - j / TJ) * .85; const st = GQ() ? (j < 4 ? 1 : 2) : 3; for(let r = sw.R * .4; r <= sw.R + 1; r += st) P(x + Math.cos(an) * r, y - 2 + Math.sin(an) * r, j < 2 || r > sw.R - 2 ? '#ffffff' : col); }
+      if(GQ()){ const TJ = GQ() === 2 ? 14 : 8, TS = 1.28, dir = Math.sign(span * (sw.spins || 1)) || 1, cy = y - 2, lt = mixc(col, '#ffffff', .45); // a crescent: thick and bright at the blade, thin at the tail
+        for(let j = 0; j < TJ; j++){ const b0 = cur - dir * j * TS / TJ, b1 = cur - dir * (j + 1) * TS / TJ, tk = 1 - j / TJ, th = 1.5 + sw.R * .32 * tk, lo = Math.min(b0, b1), hi = Math.max(b0, b1);
+          g.globalAlpha = .8 * tk; g.fillStyle = j < 2 ? '#ffffff' : j < TJ * .45 ? lt : col; g.beginPath(); g.arc(x, cy, sw.R + .5, lo, hi + .02); g.arc(x, cy, Math.max(1, sw.R - th), hi + .02, lo, true); g.closePath(); g.fill(); }
+        g.globalAlpha = .9; g.strokeStyle = '#ffffff'; g.lineWidth = 1; g.beginPath(); const e0 = cur - dir * TS * .55; g.arc(x, cy, sw.R, Math.min(cur, e0), Math.max(cur, e0)); g.stroke(); g.globalAlpha = 1; }
+      else { const TJ = [4, 9, 16][GQ()]; for(let j = 0; j < TJ; j++){ const an = cur - j * .08 * 16 / TJ; g.globalAlpha = (1 - j / TJ) * .85; const st = GQ() ? (j < 4 ? 1 : 2) : 3; for(let r = sw.R * .4; r <= sw.R + 1; r += st) P(x + Math.cos(an) * r, y - 2 + Math.sin(an) * r, j < 2 || r > sw.R - 2 ? '#ffffff' : col); } }
       if(Math.random() < .6) G.parts.push({ x: x + Math.cos(cur) * sw.R, y: y - 2 + Math.sin(cur) * sw.R, vx: Math.cos(cur + 1.57) * 60, vy: Math.sin(cur + 1.57) * 60, life: .2, max: .2, c: Math.random() < .5 ? '#ffffff' : col, grav: 0 });
       g.globalAlpha = 1;
       g.save(); g.translate(x, y - 2); g.rotate(cur); g.drawImage(spr.cv, -spr.gripX * sc, -spr.cy * sc, spr.W * sc, spr.H * sc); g.restore();
@@ -2765,12 +2820,40 @@ function monCol(key){ // main body color of a monster sprite, for its debris
   for(let i = 0; i < d.length; i += 4) if(d[i + 3] > 200 && d[i] + d[i + 1] + d[i + 2] > 90){ r += d[i]; g2 += d[i + 1]; b += d[i + 2]; n++; }
   return MONC[key] = n ? rgb2hex(r / n, g2 / n, b / n) : '#ffffff';
 }
+// ---- effect helpers (graphics mid/high): native ellipses on the low-res canvas, sparks that fly with tails
+function ell(x, y, rx, ry, col){ if(rx <= 0 || ry <= 0) return; g.fillStyle = col; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, 6.2832); g.fill(); }
+function ellS(x, y, rx, ry, lw, col){ if(rx <= 0 || ry <= 0) return; g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, 6.2832); g.stroke(); }
+function fxSparks(x, y, n, cols, spd, o){ n = GQ() === 2 ? n : Math.ceil(n / 2); for(let i = 0; i < n; i++){ const a = (o && o.dir != null ? o.dir + (Math.random() - .5) * (o.spread || 6.28) : Math.random() * 6.28), v = spd * (.45 + Math.random() * .8);
+  G.parts.push(Object.assign({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: .22 + Math.random() * .22, max: .44, c: cols[i % cols.length], grav: 160, sp: 1 }, o && o.p)); } }
+const MONPX = {};
+function monPx(k){ // every other opaque pixel of a sprite, for the shatter when it dies
+  if(MONPX[k]) return MONPX[k]; const c = MON[k], d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, out = [];
+  for(let y = 0; y < c.height; y++) for(let x = 0; x < c.width; x++){ const i = (y * c.width + x) * 4; if(d[i + 3] > 10 && (x + y) % 2 === 0) out.push([x, y, rgb2hex(d[i], d[i + 1], d[i + 2])]); }
+  return MONPX[k] = out;
+}
+function boltPts(x1, y1, x2, y2){ // a main bolt by midpoint displacement, and two forks off it
+  const sub = (pts, amp, n) => { for(let it = 0; it < n; it++){ const np = [pts[0]]; for(let i = 1; i < pts.length; i++){ const [ax, ay] = pts[i - 1], [bx, by] = pts[i], dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy) || 1, o = (Math.random() - .5) * amp;
+    np.push([(ax + bx) / 2 - dy / l * o, (ay + by) / 2 + dx / l * o], [bx, by]); } pts = np; amp *= .55; } return pts; };
+  const L = Math.hypot(x2 - x1, y2 - y1), m = sub([[x1, y1], [x2, y2]], Math.min(30, L * .25), 4), out = [m];
+  for(let f = 0; f < 2; f++){ const i = 3 + Math.floor(Math.random() * (m.length - 6)), [sx, sy] = m[i], a = Math.atan2(y2 - y1, x2 - x1) + (Math.random() < .5 ? -1 : 1) * (.5 + Math.random() * .6), l = L * (.15 + Math.random() * .15);
+    out.push(sub([[sx, sy], [sx + Math.cos(a) * l, sy + Math.sin(a) * l]], l * .3, 3)); }
+  return out;
+}
 function killFx(m){ // how a monster goes down (also for copies the host says are gone)
   SFX.die(); if(m.kind === 'elite' || m.kind === 'boss'){ B.hs = m.kind === 'boss' ? .25 : .06; G.shake = Math.max(G.shake, m.kind === 'boss' ? 8 : 3); }
   B.rings = B.rings || []; B.rings.push({ x: m.x, y: m.y - m.r * .5, t: 0, r: m.r * 1.6 });
   if(m.kind === 'elite'){ B.rings.push({ x: m.x, y: m.y - m.r * .5, t: -.05, r: m.r * 3 }); burst(m.x, m.y - m.r * .5, 18, ['#ff3a2a', '#ffd27a', '#ffffff'], 120, .5, 60); } // elites go out with a bang
   const mc = monCol(m.key);
-  B.decals = B.decals || []; B.decals.push({ x: m.x, y: m.y + m.r * .5, c: mixc(mc, '#000000', .45), t: 8, r: Math.min(8, m.r) }); if(B.decals.length > 140) B.decals.shift(); burst(m.x, m.y - m.r * .4, m.kind === 'boss' ? 80 : 12, m.kind === 'gold' ? ['#f7d24a', '#fff8d0'] : [mc, mixc(mc, '#000000', .35), mixc(mc, '#ffffff', .4), '#ffffff'], 80, .55, 160);
+  B.decals = B.decals || []; B.decals.push({ x: m.x, y: m.y + m.r * .5, c: mixc(mc, '#000000', .45), t: 8, r: Math.min(8, m.r) }); if(B.decals.length > 140) B.decals.shift();
+  const hq = GQ(); if(hq && MON[m.key]){ // it bursts into the pixels it was drawn with, and a little soul floats up
+    const px = monPx(m.key), sc = m.sc || 1, w = MON[m.key].width * sc, h = MON[m.key].height * sc, x0 = m.x - w / 2, y0 = m.y + m.r * .6 - h, flip = m.face < 0;
+    let n = Math.min(px.length, (hq === 2 ? 30 : 12) * (m.kind === 'boss' ? 2.5 : 1)); const step = px.length / n;
+    for(let i = 0; i < n; i++){ const [sx, sy, c] = px[Math.floor(i * step)], lx = (flip ? MON[m.key].width - 1 - sx : sx) * sc, ly = sy * sc;
+      G.parts.push({ x: x0 + lx, y: y0 + ly, vx: (lx - w / 2) * 6 / sc + (Math.random() - .5) * 30, vy: -20 - Math.random() * 50 + (ly - h) * 1.2 / sc, life: .45 + Math.random() * .4, max: .85, c, grav: 150, sz: sc > 1.4 || Math.random() < .25 ? 2 : 1, bounce: m.y + m.r * .6 + Math.random() * 4 }); }
+    fxSparks(m.x, m.y - m.r * .5, 8, ['#ffffff', '#fff2c0'], 120, { p: { grav: 0 } });
+    G.parts.push({ x: m.x, y: m.y - h * .6, vx: 0, vy: -24, life: .9, max: .9, c: m.kind === 'gold' ? '#ffe070' : '#bfe4ff', grav: 0, gl: 1 });
+    m.shat = 1; m.hitT = .07; }
+  burst(m.x, m.y - m.r * .4, m.kind === 'boss' ? (hq ? 40 : 80) : (hq ? 5 : 12), m.kind === 'gold' ? ['#f7d24a', '#fff8d0'] : [mc, mixc(mc, '#000000', .35), mixc(mc, '#ffffff', .4), '#ffffff'], 80, .55, 160);
 }
 function svKill(m){
   const rep = B.mp && !MP.host, peer = !!m.byPeer; // rep: my copy of the host's monster; peer: (host) a friend's blow finished it
@@ -3050,7 +3133,7 @@ function survUpdate(dt){
   for(let i = (B.decals || []).length - 1; i >= 0; i--){ B.decals[i].t -= dt; if(B.decals[i].t <= 0) B.decals.splice(i, 1); }
   for(let i = (B.rings || []).length - 1; i >= 0; i--){ B.rings[i].t += dt; if(B.rings[i].t > .25) B.rings.splice(i, 1); }
   for(const arr of [B.blasts, B.pillars, B.bolts]) for(let i = arr.length - 1; i >= 0; i--){ arr[i].t += dt; if(arr[i].t > .35) arr.splice(i, 1); }
-  for(let i = (B.hits || []).length - 1; i >= 0; i--){ B.hits[i].t += dt; if(B.hits[i].t > .14) B.hits.splice(i, 1); }
+  for(let i = (B.hits || []).length - 1; i >= 0; i--){ B.hits[i].t += dt; if(B.hits[i].t > .2) B.hits.splice(i, 1); }
   if(B.clearFx != null){ B.clearFx += dt; if(B.clearFx > .9) B.clearFx = null; }
   if(B.bossFx){ B.bossFx.t += dt; if(B.bossFx.t > 1.2) B.bossFx = null; }
   if(B.headPicks > 0 && !B.pick){ B.headPicks--; svLevelUp(); }
@@ -3104,7 +3187,10 @@ function svHurt(m){
   if(B.shield){ B.shield = 0; B.shieldT = 0; G.flash = .15; G.flashC = '#fff3b0'; SFX.perfect(); B.nums.push({ x: P.x, y: P.y - 18, v: '방패!', crit: true, t: 0, c: '#fff3b0' }); for(const o of B.mons) if(o.die === 0 && Math.hypot(o.x - P.x, o.y - P.y) < 50){ o.kx += (o.x - P.x) * .8; o.ky += (o.y - P.y) * .8; } return; }
   if(B.fx === 'fade' && Math.random() < .25){ B.nums.push({ x: P.x, y: P.y - 18, v: '피했다!', crit: true, t: 0, c: '#c8d4ff' }); return; }
   const taken = Math.max(1, Math.round(m.dmg * (1 - en('armor') * .2) * (B.fam === 'g' ? .7 : 1) * (tr('tough') ? .85 : 1) * (tr('c_grit') ? .9 : 1)));
-  P.hp = Math.max(0, P.hp - taken); B.hurtT = .3; G.shake = Math.max(G.shake, 4); SFX.boom();
+  P.hp = Math.max(0, P.hp - taken); G.shake = Math.max(G.shake, 5); B.hs = Math.max(B.hs || 0, .05); // getting hit has its own look, sound and buzz, so it never blends in with skills
+  B.ouch = { t: 0 }; SFX.ouch(); if(P.hp > 0 && P.hp < P.max * .3) setTimeout(() => SFX.heart(), 230);
+  try{ if(sfxOn() && navigator.vibrate) navigator.vibrate([45, 35, 45]); }catch(_){}
+  for(let i = 0; i < 10; i++){ const a = Math.random() * 6.28, v = 60 + Math.random() * 70; G.parts.push({ x: P.x, y: P.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 30, life: .35, max: .35, c: i % 3 ? '#ff3a2a' : '#ffffff', grav: 200, sp: 1 }); }
   B.nums.push({ x: P.x, y: P.y - 18, v: '-' + taken, crit: true, t: 0, c: '#ff5a4a' });
   if(P.hp <= 0) loseBattle('hp');
 }
@@ -3144,11 +3230,15 @@ function survDraw(dt){
   if(sk('aura')){ g.globalAlpha = .25 + .1 * Math.sin(G.t * 4); for(let a = 0; a < 48; a++){ const an = a / 48 * 6.28 + G.t; P(PL.x + Math.cos(an) * 52, PL.y + Math.sin(an) * 52 * .8, '#fff3b0'); } g.globalAlpha = 1; }
   const order = B.mons.slice().sort((a, b) => a.y - b.y);
   for(const m of order){
+    if(m.shat && m.die > .07) continue; // gone to pieces
     const img = MON[m.key], w = img.width * m.sc, h = img.height * m.sc, dieK = m.die > 0 ? clamp(1 - m.die / .4, 0, 1) : 1;
-    const sq = m.die === 0 && m.stun <= 0 ? Math.sin(G.t * 12 + m.id) * .07 : 0, hh = Math.round(h * (1 + sq) * (m.die > 0 ? 1 - m.die : 1)), ww2 = Math.round(w * (1 - sq * .6) * (m.die > 0 ? 1 + m.die * 1.5 : 1));
+    const sq = m.die === 0 && m.stun <= 0 ? Math.sin(G.t * 12 + m.id) * .07 : 0, hit = m.hitT > 0 && m.die === 0 ? 1 : 0, hh = Math.round(h * (1 + sq) * (m.die > 0 ? 1 - m.die : 1) * (1 - hit * .14)), ww2 = Math.round(w * (1 - sq * .6) * (m.die > 0 ? 1 + m.die * 1.5 : 1) * (1 + hit * .1)); // a blow squashes it flat for a moment
     const step = m.die === 0 && m.stun <= 0 && m.born >= .35 && m.ai !== 'hop' && m.ai !== 'boss' ? Math.round(Math.abs(Math.sin(G.t * (m.fast ? 16 : 10) + m.id * 3)) * (m.fast ? 2 : 1.6)) : 0; // a little step bounce
-    const dx = Math.round(m.x - ww2 / 2), dy = Math.round(m.y - hh + m.r * .6 - (m.hopZ || 0) - step);
-    g.globalAlpha = .3 * dieK; R(Math.round(m.x - w * .35), Math.round(m.y + m.r * .6 - 1), Math.round(w * .7), 2, '#000'); R(Math.round(m.x - w * .25), Math.round(m.y + m.r * .6), Math.round(w * .5), 1, '#000');
+    const hq = GQ(), bob = hq && MON_FLY[m.key] && m.die === 0 ? Math.round(Math.sin(G.t * 4 + m.id) * 2 + 3) : 0; // flyers hover
+    const dx = Math.round(m.x - ww2 / 2), dy = Math.round(m.y - hh + m.r * .6 - (m.hopZ || 0) - step - bob);
+    if(hq){ const sw = Math.round(w * (bob ? .5 - bob * .02 : .72)), sy = Math.round(m.y + m.r * .6); // a soft two-tone shadow
+      g.globalAlpha = .16 * dieK; R(Math.round(m.x - sw / 2), sy - 1, sw, 3, '#000'); R(Math.round(m.x - sw / 2) - 2, sy, sw + 4, 1, '#000'); g.globalAlpha = .3 * dieK; R(Math.round(m.x - sw * .35), sy - 1, Math.round(sw * .7), 2, '#000'); }
+    else { g.globalAlpha = .3 * dieK; R(Math.round(m.x - w * .35), Math.round(m.y + m.r * .6 - 1), Math.round(w * .7), 2, '#000'); R(Math.round(m.x - w * .25), Math.round(m.y + m.r * .6), Math.round(w * .5), 1, '#000'); }
     if(m.die === 0 && (m.act === 1) && (m.ai === 'dash' || (m.ai === 'boss'))){ g.globalAlpha = .35 + .3 * Math.sin(G.t * 30); const len = m.ai === 'boss' ? 160 : 80; for(let i = 0; i < len; i += 2) R(m.x + Math.cos(m.da) * i - 1, m.y + Math.sin(m.da) * i - 1, 3, 3, '#ff3a2a'); }
     if(m.die === 0 && m.act === 1 && m.ai === 'bomb'){ const k = 1 - m.actT / .9; g.globalAlpha = .25 + .45 * k * (Math.sin(G.t * 40) > 0 ? 1 : .5); for(let a = 0; a < 48; a++){ const an = a / 48 * 6.28; P(m.x + Math.cos(an) * BOOM_R, m.y + Math.sin(an) * BOOM_R * .75, '#ff3a2a'); } g.globalAlpha = .12 + .15 * k; for(let yy = -BOOM_R * .75; yy <= BOOM_R * .75; yy += 2){ const ww4 = BOOM_R * k * Math.sqrt(1 - (yy / (BOOM_R * .75)) ** 2); R(m.x - ww4, m.y + yy, ww4 * 2, 1, '#ff3a2a'); } }
     if(m.die === 0 && m.act === 1 && m.ai === 'shoot'){ g.globalAlpha = .6; R(m.x - 2, m.y - m.r - 6, 4, 4, Math.sin(G.t * 30) > 0 ? '#ff5a4a' : '#ffffff'); }
@@ -3160,7 +3250,10 @@ function survDraw(dt){
     if(m.fast && m.die === 0 && m.kind === 'normal'){ if(GQ() && !S.opts.noOutline) [[-1, 0], [1, 0]].forEach(([a, b]) => drawTinted(MON[m.key + '_w'], dx + a, dy + b, '#ffe070', .45, m.sc)); if(Math.random() < .4) G.parts.push({ x: m.x - (m.face || 1) * 5, y: m.y - 2, vx: -(m.face || 1) * 30, vy: 0, life: .2, max: .2, c: '#ffe8a0', grav: 0 }); }
     if(m.kind === 'elite' && m.die === 0 && Math.random() < .3) G.parts.push({ x: m.x + (Math.random() - .5) * 10, y: dy + 2, vx: 0, vy: -18, life: .5, max: .5, c: Math.random() < .5 ? '#ff3a2a' : '#5a0a0a', grav: 0 });
     if(m.kind === 'gold' && m.die === 0) [[-1, 0], [1, 0], [0, -1], [0, 1]].slice(0, outlineN()).forEach(([a, b]) => drawTinted(MON[m.key + '_w'], dx + a, dy + b, '#fff2a0', .7, m.sc));
-    g.drawImage(m.hitT > 0 ? MON[m.key + '_w'] : img, dx, dy, ww2, hh);
+    if(hq && m.key === 'ghost') g.globalAlpha *= .82 + .12 * Math.sin(G.t * 6 + m.id);
+    g.drawImage(m.hitT > 0 ? MON[m.key + '_w'] : hq && MON[m.key + '_b'] && (G.t + m.id * 1.7) % 3.2 < .12 ? MON[m.key + '_b'] : img, dx, dy, ww2, hh);
+    if(hq === 2 && MON[m.key + '_g'] && m.die === 0){ const gl = MON[m.key + '_g'], kx = ww2 / img.width, ky = hh / img.height; g.globalCompositeOperation = 'lighter'; g.globalAlpha = .55 + .3 * Math.sin(G.t * 3 + m.id); g.drawImage(gl, dx - 5 * kx, dy - 5 * ky, gl.width * kx, gl.height * ky); g.globalCompositeOperation = 'source-over'; g.globalAlpha = dieK; }
+    if(hq === 2 && m.die === 0 && (m.key === 'wisp' || m.key === 'fwisp' || m.key === 'mslime') && Math.random() < .25) G.parts.push({ x: m.x + (Math.random() - .5) * w * .5, y: dy + hh * .35, vx: (Math.random() - .5) * 6, vy: -14 - Math.random() * 10, life: .5, max: .5, c: m.key === 'fwisp' ? '#d0a0ff' : '#ffb04a', grav: 0, gl: 1 });
     if(m.slowT > 0 && GQ()) drawTinted(MON[m.key + '_w'], dx, dy, '#9be7ff', .35, m.sc);
     if(flip) g.restore();
     if(m.burnT > 0 && m.die === 0){ const fl = (i, hgt) => { const fx = Math.round(m.x + i * w * .22), fh = Math.round(hgt * (.6 + .4 * Math.abs(Math.sin(G.t * 14 + m.id * 3 + i * 2)))); R(fx - 1, dy - fh + 2, 3, fh, '#ff5a1a'); R(fx, dy - fh + 1, 1, Math.max(1, fh - 2), '#ffd23a'); P(fx, dy - fh + 1, '#fff2a0'); }; fl(-1, 5); fl(0, 8); fl(1, 5); } /* on fire */
@@ -3172,7 +3265,8 @@ function survDraw(dt){
   }
   for(const e of B.eshots){ const c = ESHOT_C[B.ai]; R(Math.round(e.x) - 2, Math.round(e.y) - 2, 5, 5, COL.ink); R(Math.round(e.x) - 1, Math.round(e.y) - 1, 3, 3, c); P(e.x, e.y, '#ffffff'); }
   for(let i = (B.stars || []).length - 1; i >= 0; i--){ const st = B.stars[i]; st.t += dt; if(st.t > .18){ B.stars.splice(i, 1); continue; } const k = st.t / .18, L = Math.round(3 + k * 7); g.globalAlpha = 1 - k; R(st.x - L, st.y, L * 2 + 1, 1, '#ffffff'); R(st.x, st.y - L, 1, L * 2 + 1, '#ffffff'); R(st.x - 1, st.y - 1, 3, 3, '#ffe070'); g.globalAlpha = 1; }
-  for(const r of B.rings || []){ const k = r.t / .25; g.globalAlpha = 1 - k; for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(r.x + Math.cos(an) * r.r * (.4 + k), r.y + Math.sin(an) * r.r * (.4 + k) * .8, '#ffffff'); } g.globalAlpha = 1; }
+  if(GQ()) for(const r of B.rings || []){ const k = Math.max(0, r.t) / .25; if(k >= 1) continue; const rr = r.r * (.4 + k); g.globalAlpha = 1 - k; ellS(r.x, r.y, rr, rr * .8, 2.5 * (1 - k) + .6, '#ffffff'); g.globalAlpha = (1 - k) * .5; ellS(r.x, r.y, rr * .7, rr * .56, 1, '#fff2c0'); g.globalAlpha = 1; }
+  else for(const r of B.rings || []){ const k = r.t / .25; g.globalAlpha = 1 - k; for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(r.x + Math.cos(an) * r.r * (.4 + k), r.y + Math.sin(an) * r.r * (.4 + k) * .8, '#ffffff'); } g.globalAlpha = 1; }
   for(const c of B.casts || []){ // rune circle where it will land, and the orb itself
     const k = Math.min(1, c.t / c.dur), r = svR(), rot = G.t * 3;
     g.globalAlpha = .35 + .45 * k; for(let a = 0; a < 40; a++){ if(a % 5 === 4) continue; const an = a / 40 * 6.28 + rot; P(c.x + Math.cos(an) * r, c.y + Math.sin(an) * r * .6, B.wcol); }
@@ -3189,6 +3283,10 @@ function survDraw(dt){
   if(B.blinkT > 0) B.blinkT -= dt; // 점멸: gone for a blink, then there
   if(B.dead){ ic('skull', Math.round(PL.x) - 7, Math.round(PL.y) - 8, 2); T(S.name + ' (쓰러짐)', PL.x, PL.y - 20, { f: 's', a: 'c', c: COL.faint, ol: COL.ink }); }
   else if(!inv && !(B.blinkT > 0)) heroDraw(PL.x, PL.y, G.t);
+  if(B.ouch && B.ouch.t < .4){ const k = B.ouch.t / .4; // hurt: a red ring bursts off me and a red X flashes on me
+    g.globalAlpha = 1 - k; ellS(PL.x, PL.y - 6, 6 + k * 18, (6 + k * 18) * .8, 2.5 * (1 - k) + .5, '#ff3a2a');
+    if(k < .45){ const L = 7 * (1 - k / .45) + 2; g.globalAlpha = 1; for(let i = -L; i <= L; i++){ P(PL.x + i, PL.y - 6 + i, Math.abs(i) < 2 ? '#ffffff' : '#ff3a2a'); P(PL.x + i, PL.y - 6 - i, Math.abs(i) < 2 ? '#ffffff' : '#ff3a2a'); } }
+    g.globalAlpha = 1; }
   if(B.mp) chatBubble(MP.me, PL.x, PL.y - 30);
   if(B.castT > 0){ g.globalAlpha = B.castT * 2.5; for(let a = 0; a < 16; a++){ const an = a / 16 * 6.28 + G.t * 8; P(PL.x + Math.cos(an) * 8, PL.y - 16 + Math.sin(an) * 3, B.wcol); } R(PL.x + 3, PL.y - 26, 2, 12, '#ffffff'); g.globalAlpha = 1; }
   if(B.shield){ g.globalAlpha = .5 + .2 * Math.sin(G.t * 5); for(let a = 0; a < 24; a++){ const an = a / 24 * 6.28; P(PL.x + Math.cos(an) * 11, PL.y - 2 + Math.sin(an) * 12, '#fff3b0'); } g.globalAlpha = 1; }
@@ -3197,18 +3295,45 @@ function survDraw(dt){
   const lowQ = !GQ();
   for(const s of B.shots){ if(lowQ){ R(s.x - 1, s.y - 1, 3, 3, B.wcol); P(s.x, s.y, '#ffffff'); continue; } if(s.dag){ for(let i = 0; i < 6; i++) P(s.x - Math.cos(s.a) * i, s.y - Math.sin(s.a) * i, i < 2 ? '#ffffff' : B.wcol); continue; } const c = B.wcol, len = 5; for(let i = -len; i <= len; i++){ const an = s.a + Math.PI / 2; P(s.x + Math.cos(an) * i + Math.cos(s.a) * (Math.abs(i) * -.4), s.y + Math.sin(an) * i + Math.sin(s.a) * (Math.abs(i) * -.4), Math.abs(i) < 2 ? '#ffffff' : c); if(s.big) P(s.x + Math.cos(an) * i, s.y + Math.sin(an) * i + 1, c); } }
   for(const b of B.blasts){ if(b.fire){ fireBlastDraw(b); continue; } const k = b.t / .35, r = b.r * (.5 + k * .5), bc = b.quake ? '#c8a070' : b.magic ? (b.col || B.wcol) : '#ff9a3a';
+    if(GQ()){ if(k >= 1) continue; const sy = b.quake ? .6 : 1, R0 = b.r * (.35 + .65 * (1 - Math.pow(1 - Math.min(1, k * 1.6), 3))), lt = mixc(bc, '#ffffff', .55); // a layered blast: glow, a core that burns out, a thick shock ring
+      if(!b.sp){ b.sp = 1; fxSparks(b.x, b.y, 14, ['#ffffff', lt, bc], b.quake ? 110 : 160, { p: { grav: 90 } }); }
+      const hq2 = GQ() === 2; if(hq2){ g.globalCompositeOperation = 'lighter'; g.globalAlpha = .28 * (1 - k); ell(b.x, b.y, R0 * 1.3, R0 * 1.3 * sy, bc); g.globalCompositeOperation = 'source-over'; }
+      const core = 1 - k / .6; if(core > 0){ g.globalAlpha = Math.min(1, core * 1.6); if(hq2) ell(b.x, b.y, R0 * core, R0 * core * sy, mixc(bc, '#000000', .2)); ell(b.x, b.y, R0 * core * .78, R0 * core * .78 * sy, bc); ell(b.x, b.y, R0 * core * .5, R0 * core * .5 * sy, lt); ell(b.x, b.y, R0 * core * .25, R0 * core * .25 * sy, '#ffffff'); }
+      g.globalAlpha = 1 - k; ellS(b.x, b.y, R0 + k * 10, (R0 + k * 10) * sy, 3 * (1 - k) + 1, lt); if(hq2){ g.globalAlpha = (1 - k) * .6; ellS(b.x, b.y, R0 * .7 + k * 14, (R0 * .7 + k * 14) * sy, 1, '#ffffff'); } g.globalAlpha = 1; continue; }
     if(k < .3 && GQ()){ const cr = b.r * (.25 + k * 1.2); g.globalAlpha = (.3 - k) * 2.6; for(let yy = -cr; yy <= cr; yy += 1){ const ww = Math.round(Math.sqrt(Math.max(0, cr * cr - yy * yy))); R(b.x - ww, b.y + yy * (b.quake ? .6 : 1), ww * 2, 1, k < .12 ? '#ffffff' : '#fff2c0'); } }
     g.globalAlpha = (1 - k) * .6; if(GQ()) for(let a = 0; a < 40; a++){ const an = a / 40 * 6.28 + k; P(b.x + Math.cos(an) * r * 1.18, b.y + Math.sin(an) * r * 1.18 * (b.quake ? .6 : 1), bc); }
     g.globalAlpha = 1 - k; for(let a = 0; a < 56; a++){ const an = a / 56 * 6.28; P(b.x + Math.cos(an) * r, b.y + Math.sin(an) * r * (b.quake ? .6 : 1), b.quake ? '#c8a070' : b.magic ? B.wcol : '#ff9a3a'); } if(b.magic && k < .4){ g.globalAlpha = (.4 - k) * 1.5; for(let yy = -r; yy <= r; yy += 2){ const ww = Math.round(Math.sqrt(r * r - yy * yy)); R(b.x - ww, b.y + yy, ww * 2, 1, B.wcol); } } g.globalAlpha = 1; }
-  for(const p of B.pillars){ const k = p.t / .35, top = vy + cm.y; g.globalAlpha = (1 - k) * .7; for(let a = 0; a < 28; a++){ const an = a / 28 * 6.28; P(p.x + Math.cos(an) * (8 + k * 18), p.y + Math.sin(an) * (4 + k * 8), '#fff3b0'); } g.globalAlpha = (1 - k) * .3; R(p.x - 8 + k * 4, top, 16 - k * 8, p.y - top, '#fff3b0'); g.globalAlpha = 1 - k; R(p.x - 4 + k * 2, top, 8 - k * 4, p.y - top, '#fff3b0'); R(p.x - 1, top, 2, p.y - top, '#ffffff'); g.globalAlpha = 1; }
+  if(GQ()) for(const p of B.pillars){ const k = p.t / .35, top = vy + cm.y; if(k >= 1) continue; const hq = GQ(), open = k < .12 ? k / .12 : 1 - Math.pow((k - .12) / .88, 2), wd = 8 * open, st = hq === 2 ? 2 : 6; // a beam that shimmers at the edges
+    if(!p.sp){ p.sp = 1; for(let i = 0; i < (hq === 2 ? 12 : 6); i++) G.parts.push({ x: p.x + (Math.random() - .5) * 18, y: p.y - Math.random() * 4, vx: (Math.random() - .5) * 8, vy: -30 - Math.random() * 60, life: .5 + Math.random() * .4, max: .9, c: Math.random() < .5 ? '#fff3b0' : '#ffd27a', grav: 0, gl: 1 }); }
+    g.globalCompositeOperation = 'lighter'; g.globalAlpha = (1 - k) * .6; ell(p.x, p.y, 14 + k * 8, (14 + k * 8) * .35, '#7a6020');
+    for(let yy = top; yy < p.y; yy += st){ const ww = wd + (hq === 2 ? Math.sin(yy * .45 - G.t * 30) * 1.2 * open : 0);
+      g.globalAlpha = .18; R(p.x - ww - 3, yy, (ww + 3) * 2, st, '#ffb040'); g.globalAlpha = .55; R(p.x - ww, yy, ww * 2, st, '#ffe38a'); g.globalAlpha = .9; R(p.x - ww * .45, yy, ww * .9, st, '#fff8e0'); }
+    g.globalAlpha = 1 - k; ellS(p.x, p.y, 6 + k * 20, (6 + k * 20) * .4, 1.5, '#fff3b0'); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; }
+  else for(const p of B.pillars){ const k = p.t / .35, top = vy + cm.y; g.globalAlpha = (1 - k) * .7; for(let a = 0; a < 28; a++){ const an = a / 28 * 6.28; P(p.x + Math.cos(an) * (8 + k * 18), p.y + Math.sin(an) * (4 + k * 8), '#fff3b0'); } g.globalAlpha = (1 - k) * .3; R(p.x - 8 + k * 4, top, 16 - k * 8, p.y - top, '#fff3b0'); g.globalAlpha = 1 - k; R(p.x - 4 + k * 2, top, 8 - k * 4, p.y - top, '#fff3b0'); R(p.x - 1, top, 2, p.y - top, '#ffffff'); g.globalAlpha = 1; }
   /* lightning: native strokes (the pixel polygon fill cost hundreds of fillRects per bolt) */
   if(B.bolts.length){ g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
-    for(const b of B.bolts){ g.globalAlpha = .3 * (1 - b.t / .35); g.strokeStyle = '#5ab8ff'; g.lineWidth = 6; g.beginPath(); g.moveTo(b.x1, b.y1); g.lineTo(b.x2, b.y2); g.stroke();
+    if(GQ()) for(const b of B.bolts){ const k = b.t / .35; if(k >= 1) continue; const fr = Math.floor(G.t * 30); // forked, flickering, re-drawn every other frame
+      if(!b.pts || fr - b.fr >= 2){ b.fr = fr; b.pts = boltPts(b.x1, b.y1, b.x2, b.y2); }
+      if(!b.sp){ b.sp = 1; fxSparks(b.x2, b.y2, 10, ['#ffffff', '#bff0ff', '#5ab8ff'], 140); }
+      if(k > .35 && fr % 3 === 0) continue;
+      const line = (pts, w, col, a) => { g.globalAlpha = a; g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for(let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]); g.stroke(); };
+      const bq = GQ() === 2; if(bq){ g.globalCompositeOperation = 'lighter'; b.pts.forEach((pts, i) => line(pts, i ? 3 : 6, '#2a7ad0', (i ? .2 : .3) * (1 - k))); g.globalCompositeOperation = 'source-over'; }
+      (bq ? b.pts : b.pts.slice(0, 1)).forEach((pts, i) => { const a = Math.min(1, (1 - k) * 1.5) * (i ? .7 : 1); if(!i) line(pts, 2.5, '#7ac8ff', a); line(pts, 1, i ? '#bff0ff' : '#ffffff', a); });
+      if(k < .3){ g.globalCompositeOperation = 'lighter'; g.globalAlpha = 1 - k / .3; ell(b.x2, b.y2, 7 * (1 - k / .3) + 1, (7 * (1 - k / .3) + 1) * .6, '#7ac8ff'); ell(b.x2, b.y2, 3, 2, '#ffffff'); g.globalCompositeOperation = 'source-over'; }
+      g.globalAlpha = 1; }
+    else for(const b of B.bolts){ g.globalAlpha = .3 * (1 - b.t / .35); g.strokeStyle = '#5ab8ff'; g.lineWidth = 6; g.beginPath(); g.moveTo(b.x1, b.y1); g.lineTo(b.x2, b.y2); g.stroke();
       g.globalAlpha = 1; g.strokeStyle = '#bff0ff'; g.lineWidth = 2; g.beginPath(); g.moveTo(b.x1, b.y1);
       for(let i = 1; i <= 6; i++) g.lineTo(lerp(b.x1, b.x2, i / 6) + (i < 6 ? (Math.random() - .5) * 10 : 0), lerp(b.y1, b.y2, i / 6) + (i < 6 ? (Math.random() - .5) * 10 : 0));
       g.stroke(); }
     g.restore(); }
-  for(const h of B.hits || []){ const k = h.t / .14, L = (h.crit ? 9 : 5) * (1 - k * .5); g.globalAlpha = 1 - k; // impact: a short star of light where the blow landed
+  if(GQ()) for(const h of B.hits || []){ const k = Math.min(1, h.t / .2), hc = h.crit; // impact: a flash, a ring, sparks; a crit adds a flare
+    if(!h.sp){ h.sp = 1; if(hc || GQ() === 2) fxSparks(h.x, h.y, hc ? 8 : 3, hc ? ['#ffffff', '#ffe070', '#ffb03a'] : ['#ffffff', h.c], hc ? 170 : 120); }
+    g.globalCompositeOperation = 'lighter';
+    if(k < .4){ const r = (hc ? 7 : 4) * (1 - k / .4) + 1; g.globalAlpha = 1; ell(h.x, h.y, r, r, hc ? '#ffd040' : mixc(h.c, '#88ccff', .3)); ell(h.x, h.y, r * .55, r * .55, '#ffffff'); }
+    g.globalAlpha = 1 - k; ellS(h.x, h.y, (hc ? 6 : 3) + k * (hc ? 14 : 8), ((hc ? 6 : 3) + k * (hc ? 14 : 8)) * .8, 1, hc ? '#ffe070' : '#ffffff');
+    if(hc && k < .7){ const L = 16 * (1 - k / .7); g.globalAlpha = 1 - k / .7; R(h.x - L, h.y, L * 2, 1, '#fff6c0'); R(h.x, h.y - L * .55, 1, L * 1.1, '#fff6c0'); }
+    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; }
+  else for(const h of B.hits || []){ const k = h.t / .14, L = (h.crit ? 9 : 5) * (1 - k * .5); g.globalAlpha = 1 - k; // impact: a short star of light where the blow landed
     for(let r = 1; r <= L; r++){ const c2 = r < 3 ? '#ffffff' : h.c; P(h.x + r, h.y, c2); P(h.x - r, h.y, c2); if(r < L * .7){ P(h.x, h.y + r, c2); P(h.x, h.y - r, c2); } }
     if(h.crit) for(let i = 0; i < 4; i++){ const an = h.a + i * 1.57 + .78; for(let r = 3; r < L + 3; r++) P(h.x + Math.cos(an) * r, h.y + Math.sin(an) * r, '#ffe070'); }
     g.globalAlpha = 1; }
@@ -3242,6 +3367,9 @@ function survDraw(dt){
   if(!B.over && PL.hp < PL.max * .3){ g.globalAlpha = .25 + .15 * Math.sin(G.t * 8); for(let i = 0; i < 6; i++){ g.globalAlpha *= .7; R(0, vy + i, VW, 1, '#ff2a1a'); R(0, vy + vh - 1 - i, VW, 1, '#ff2a1a'); R(i, vy, 1, vh, '#ff2a1a'); R(VW - 1 - i, vy, 1, vh, '#ff2a1a'); } g.globalAlpha = 1; }
   if(B.bossFx){ const k = B.bossFx.t / 1.2; g.globalAlpha = (1 - k) * .35; for(let i = 0; i < 10; i++){ R(0, vy + i * 2, VW, 2, '#5a0000'); R(0, vy + vh - (i + 1) * 2, VW, 2, '#5a0000'); } g.globalAlpha = 1; }
   if(B.hurtT > 0){ B.hurtT -= dt; g.globalAlpha = B.hurtT; R(0, vy, VW, vh, '#ff2a1a'); g.globalAlpha = 1; }
+  if(B.ouch){ B.ouch.t += dt; const k = B.ouch.t / .45; if(k >= 1) B.ouch = null; else { // hurt: thick red edges that close in a little, then fade
+    const th = Math.round(14 + 6 * (1 - k)); for(let i = 0; i < th; i += 2){ g.globalAlpha = (1 - k) * .6 * (1 - i / th); R(0, vy + i, VW, 2, '#ff1a1a'); R(0, vy + vh - 2 - i, VW, 2, '#ff1a1a'); R(i, vy, 2, vh, '#ff1a1a'); R(VW - 2 - i, vy, 2, vh, '#ff1a1a'); }
+    g.globalAlpha = (1 - k) * .1; R(0, vy, VW, vh, '#ff2a1a'); g.globalAlpha = 1; } }
   if(B.fevT > 0){ g.globalAlpha = B.fevT; R(0, vy, VW, vh, '#fff6d8'); g.globalAlpha = 1; }
   R(0, vy + vh, VW, 1, COL.ink);
   if(B.dead && !B.over){ hit('bview', 0, vy, VW, vh, () => specNext()); { const o = specTarget(); T(o ? '관전 중: ' + (badName(o.nm) ? '친구' : o.nm) + ' · 누르면 다음 친구' : '남은 친구가 없다', VW / 2, vy + vh - 120, { f: 'b', a: 'c', c: '#bfe0ff', ol: COL.ink }); } }
@@ -3252,7 +3380,11 @@ function survDraw(dt){
   if(B.mp && G.chatOpen && !B.over){ const cw = Math.min(86, Math.floor((VW - 12) / 3) - 4), cx0 = Math.round((VW - (cw + 4) * 3 + 4) / 2); QCHAT.forEach((t, i) => button('qc' + i, cx0 + (i % 3) * (cw + 4), sy0 - 78 + Math.floor(i / 3) * 24, cw, 21, t, null, () => { mpSay(i); G.chatOpen = false; }, { small: true, kind: 'blue' }));
     button('qct', cx0, sy0 - 102, (cw + 4) * 3 - 4, 21, '직접 입력하기 (Enter)', null, () => { G.chatOpen = false; chatInput(); }, { small: true, kind: 'gold' }); }
   g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
-  T('체력', 8, sy0 + 5, { f: 's', c: COL.dim }); bar(36, sy0 + 7, 120, 7, PL.hp / PL.max, PL.hp < PL.max * .35 ? '#ff5a3a' : '#4ab04a'); T(Math.ceil(PL.hp) + '/' + PL.max, 96, sy0 + 6, { f: 's', a: 'c', c: '#ffffff', ol: COL.ink });
+  B.hpLag = Math.max(PL.hp, Math.min(B.hpLag == null ? PL.hp : B.hpLag, PL.max) - PL.max * .5 * dt * (B.ouch ? 0 : 1)); // the part just lost lingers in white, then drains
+  { const hk = B.ouch ? 1 - B.ouch.t / .45 : 0, bx = 36 + (hk > .5 ? Math.round((Math.random() - .5) * 3) : 0);
+  T('체력', 8, sy0 + 5, { f: 's', c: hk > 0 ? '#ff5a4a' : COL.dim }); bar(bx, sy0 + 7, 120, 7, PL.hp / PL.max, PL.hp < PL.max * .35 ? '#ff5a3a' : '#4ab04a');
+  if(B.hpLag > PL.hp){ const a = Math.round(120 * PL.hp / PL.max), b = Math.round(120 * B.hpLag / PL.max); R(bx + a, sy0 + 7, b - a, 7, hk > 0 ? '#ffffff' : '#ffd0c0'); }
+  if(hk > 0){ g.globalAlpha = hk; R(bx - 2, sy0 + 5, 124, 1, '#ff3a2a'); R(bx - 2, sy0 + 15, 124, 1, '#ff3a2a'); R(bx - 2, sy0 + 5, 1, 11, '#ff3a2a'); R(bx + 121, sy0 + 5, 1, 11, '#ff3a2a'); g.globalAlpha = 1; } } T(Math.ceil(PL.hp) + '/' + PL.max, 96, sy0 + 6, { f: 's', a: 'c', c: '#ffffff', ol: COL.ink });
   T('필살', 8, sy0 + 22, { f: 's', c: full ? COL.gold : COL.dim }); bar(36, sy0 + 25, 120, 6, B.fev / 100, full ? (Math.sin(G.t * 10) > 0 ? '#ffe070' : '#ff9a3a') : '#c8902a');
   if(!compact) T((B.boss ? (B.bossOut ? '보스를 쓰러뜨려라' : '보스가 다가온다...') : B.endless ? '다음 층까지 ' + Math.max(0, Math.ceil(B.need - B.pr)) + '마리' : '돌파 ' + Math.min(99, Math.floor(B.pr / B.need * 100)) + '%' + ((B.okAvg || 1) >= 3 ? ' · 압도 ▶▶' : ' · 처치 ' + B.kills)) + '   +' + fmt(B.gold) + ' G', 166, sy0 + 14, { f: 's', c: COL.text });
   else T(B.boss ? '보스' : (B.endless ? '' : (B.okAvg || 1) >= 3 ? '압도 ▶▶ ' : '') + Math.min(99, Math.floor(B.pr / B.need * 100)) + '%', 262, sy0 + 5, { f: 's', a: 'r', c: !B.endless && (B.okAvg || 1) >= 3 ? '#ffd27a' : COL.text });
@@ -3618,6 +3750,9 @@ function drawParts(dt){
     if(p.bounce && p.y > p.bounce){ p.y = p.bounce; p.vy *= -.3; p.vx *= .6; }
     g.globalAlpha = clamp(p.life / (p.max * .4), 0, 1);
     if(p.streak){ const n = 3; for(let k = 0; k < n; k++) P(p.x - p.vx * k * .008, p.y - p.vy * k * .008, p.c); }
+    else if(p.sp){ const a0 = g.globalAlpha, sp = Math.hypot(p.vx, p.vy) || 1, n = clamp(Math.round(sp / 40), 0, 4); // a spark: bright head, fading tail along its flight
+      for(let k = n; k >= 1; k--){ g.globalAlpha = a0 * (1 - k / (n + 1)); P(p.x - p.vx / sp * k, p.y - p.vy / sp * k, p.c); } g.globalAlpha = a0; P(p.x, p.y, p.life / p.max > .55 ? '#ffffff' : p.c); }
+    else if(p.gl){ const a0 = g.globalAlpha; g.globalCompositeOperation = 'lighter'; g.globalAlpha = a0 * .35; R(p.x - 1, p.y - 1, 3, 3, p.c); g.globalAlpha = a0; P(p.x, p.y, mixc(p.c, '#ffffff', .5)); g.globalCompositeOperation = 'source-over'; }
     else R(p.x, p.y, p.sz || 1, p.sz || 1, p.c);
   }
   g.globalAlpha = 1;
@@ -4393,7 +4528,9 @@ function drawOverlays(dt){
       T(b.title, x + 26, y + 5, { f: 's', c: COL.ember }); T(b.sub, x + 26, y + 16, { f: 'b', c: COL.text });
     }
   }
-  if(G.toast){ G.toast.t += dt; if(G.toast.t > 1.4) G.toast = null; else { const w = tw(G.toast.msg, 'b') + 24; const x = Math.round((VW - w) / 2); panel(x, 222, w, 24, 'iron'); T(G.toast.msg, VW / 2, 228, { f: 'b', a: 'c' }); } }
+  if(G.toast){ G.toast.t += dt; if(G.toast.t > 1.4) G.toast = null; else { const w = tw(G.toast.msg, 'b') + 24, x = Math.round((VW - w) / 2); g.globalAlpha = .85; R(x, 30, w, 20, COL.ink); R(x + 1, 31, w - 2, 18, '#2a1e18'); g.globalAlpha = 1; T(G.toast.msg, VW / 2, 34, { f: 'b', a: 'c', ol: COL.ink }); } } // notices sit at the top, never over the middle
+  if(G.hint){ G.hint.t += dt; if(G.hint.t > 6) G.hint = null; else { const a = Math.min(1, G.hint.t * 3, (6 - G.hint.t) * 2), w = tw(G.hint.msg, 's') + 16, x = Math.round((VW - w) / 2), y = G.toast ? 54 : 30;
+    g.globalAlpha = .55 * a; R(x, y, w, 15, '#000000'); g.globalAlpha = a; T(G.hint.msg, VW / 2, y + 3, { f: 's', a: 'c', c: '#ffe8a0', ol: COL.ink }); g.globalAlpha = 1; } }
 }
 
 // ---------------- title ----------------
@@ -4553,17 +4690,17 @@ function drawBackdrop(){ // the sides around a centred screen: its own backgroun
   R(OX - 3, OY - 3, 276, 486, '#000'); R(OX - 2, OY - 2, 274, 484, '#2a1c14');
 }
 let lastT = 0, saveT = 0;
-// 그래픽 자동: in battle, if over 40% of ~120 frames take longer than 40 ms, step down one level and keep it for next time
+// in battle, if over 40% of ~120 frames take longer than 40 ms, suggest a lower setting — once ever, and never change it ourselves
 function autoGfx(raw){
-  const o = S.opts; if(o.gfx && o.gfx !== 'auto') return; const q = GQ(); if(!q) return;
+  const o = S.opts; if(o.gfxTip || !GQ()) return;
   const A = G.af || (G.af = { n: 0, slow: 0 }); A.n++; if(raw > 40 && raw < 1000) A.slow++;
   if(A.n < 120) return;
-  if(A.slow > 48){ o.autoQ = q - 1; save(); fit(); toast('버벅여서 그래픽을 「' + GFXN[q - 1] + '」으로 낮췄다'); }
+  if(A.slow > 48){ o.gfxTip = 1; save(); G.hint = { msg: '화면이 버벅이면 설정(⚙) → 그래픽을 낮춰 보세요', t: 0 }; }
   A.n = 0; A.slow = 0;
 }
 const GFXN = ['낮음', '보통', '높음'];
-function gfxLabel(){ const v = S.opts.gfx; return v === 'low' || v === 'mid' || v === 'high' ? GFXN[GQ()] : '자동·' + GFXN[GQ()]; }
-function gfxNext(){ const order = ['auto', 'high', 'mid', 'low'], i = order.indexOf(S.opts.gfx || 'auto'); S.opts.gfx = order[(i + 1) % 4]; if(S.opts.gfx === 'auto') S.opts.autoQ = null; G.af = null; save(); fit(); }
+function gfxLabel(){ return GFXN[GQ()]; }
+function gfxNext(){ const order = ['high', 'mid', 'low'], i = order.indexOf(S.opts.gfx); S.opts.gfx = order[(i + 1) % 3]; G.af = null; save(); fit(); }
 function dmgNext(){ const order = ['all', 'crit', 'off'], i = order.indexOf(dmgMode()); S.opts.dmgNum = order[(i + 1) % 3]; save(); }
 function loop(now){
   const raw = now - lastT, dt = Math.min(.05, Math.max(0, raw / 1000)); lastT = now; G.t += dt;

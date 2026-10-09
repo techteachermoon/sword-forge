@@ -1084,7 +1084,7 @@ const MAX = 35;
 
 // ---------------- weapon tech tree ----------------
 // id = line + ':' + level.  c:0-9 common → (+10) g/t/m → (+20) g1,g2 / t1,t2 / m1,m2 up to +30
-const TWIN_CRIT = .12; // 단도 계열 기본 치명타 (테스트 중)
+const TWIN_CRIT = .25; // 단도 계열(쌍검·암살자·비도술사) 기본 치명타
 const WL = {
   c:  { n: '공통', shape: 'common', from: 0, to: 9, par: null, col: '#d8d0c0' },
   g:  { n: '대검', shape: 'great', from: 10, to: 19, par: 'c', col: '#ffb45e', hue: 30, acc: 20,
@@ -1098,7 +1098,7 @@ const WL = {
   g2: { n: '성기사', shape: 'great', from: 20, to: 35, par: 'g', col: '#ffe9a8', hue: 45, acc: 50, leaf: '#fff3b0',
         d: '8초마다 빛의 방패가 생겨 공격을 한 번 막고 주변을 밀쳐 낸다.' },
   t1: { n: '암살자', shape: 'twin', from: 20, to: 35, par: 't', col: '#a070ff', hue: 265, acc: 280, leaf: '#4a3a6a',
-        d: '치명타가 잘 터진다. 단도가 약해진 몬스터를 처형한다.' },
+        d: '단도가 약해진 몬스터를 처형한다.' },
   t2: { n: '비도술사', shape: 'twin', from: 20, to: 35, par: 't', col: '#ff8ad8', hue: 320, acc: 190, leaf: '#ff9ad8',
         d: '단검을 여러 개 던져 멀리서 꿰뚫는다. 10번 맞힐 때마다 사방으로 칼날 비를 뿌린다.' },
   m1: { n: '화염술사', shape: 'magic', from: 20, to: 35, par: 'm', col: '#ff8a3d', hue: 20, acc: 40, leaf: '#ff7a1a',
@@ -1110,7 +1110,7 @@ const WL = {
 const TRAITS = {
   c: ['기본기: 특별한 장단점이 없다.'],
   g: ['묵직한 몸: 최대 체력 +90, 받는 피해 -30%, 맞아도 밀려나지 않는다', '느린 발: 이동 속도 -5%, 구르기 대기 +0.4초'],
-  t: ['날렵함: 구르기를 2번 연달아 쓸 수 있다', '기습: 구르고 0.6초 안의 기본 공격은 모두 치명타', '가벼운 몸: 최대 체력 -20'],
+  t: ['날렵함: 구르기를 2번 연달아 쓸 수 있다', '기습: 구르고 0.6초 안의 물리 기본 공격은 모두 치명타', '가벼운 몸: 최대 체력 -20'],
   m: ['점멸: 구르기 거리 2배, 떠난 자리에 마법이 터진다', '마력 순환: 필살 게이지 +30% 빨리', '약한 몸: 최대 체력 -10'],
   g1: ['피의 갈증: 몬스터를 잡으면 체력 회복, 체력이 낮을수록 빠르고 세다'],
   g2: ['수호: 최대 체력 +20 더, 8초마다 빛의 방패가 공격을 한 번 막는다'],
@@ -1501,7 +1501,7 @@ const wfx = id => { const w = wepOf(id); return w.L >= 30 ? 'stick' : (w.spec[11
 // the numbers behind the current sword, outside of a fight (in a fight the run cards add to these)
 function wStats(lvl = S.lv, line = lineOf()){
   const id = (lvl < 10 ? 'c' : line) + ':' + lvl, fx = wfx(id);
-  const crit = ((WL[line] || WL.c).shape === 'twin' ? TWIN_CRIT : 0) + en('crit') * .07 + (fx === 'moon' ? .1 : fx === 'rainbow' ? .05 : 0) + (line === 't1' ? .25 : 0); // basic attacks only
+  const crit = ((WL[line] || WL.c).shape === 'twin' ? TWIN_CRIT : 0) + en('crit') * .07 + (fx === 'moon' ? .1 : fx === 'rainbow' ? .05 : 0); // physical basic attacks only
   const critX = 2 + (fx === 'stars' ? .5 : 0);
   const dmgX = (1 + en('might') * .15) * (fx === '' ? 1.1 : fx === 'prism' ? 1.2 : 1);
   const el = {}; ELK.forEach(k => { el[k] = ((FX_EL[fx] || {})[k] || 0) + en('st_' + k) + ((S.engr && S.engr[k]) || 0) + (line === 'm1' && k === 'fire' ? 1 : 0); });
@@ -2767,7 +2767,7 @@ function svSpawn(kind){
 }
 // 딜량표: what each kind of attack landed this run, split into monsters and bosses
 const DMODE = [['all', '전체'], ['mob', '잡몹'], ['boss', '보스']], DCOL = ['#ff9a3d', '#8ad8ff', '#c58bff', '#86e07e', '#ffd27a', '#ff6a8a', '#7ad8ff', '#d8c8a0'];
-function dmRows(mode){ const D = (B && B.dsrc) || {}; return Object.keys(D).map(k => { const r = D[k]; return { k, v: mode === 'boss' ? r.b : mode === 'mob' ? r.d - r.b : r.d, n: r.n, c: r.c }; }).filter(r => r.v > 0).sort((a, b) => b.v - a.v); }
+function dmRows(mode){ const D = (B && B.dsrc) || {}; return Object.keys(D).map(k => { const r = D[k]; return { k, v: mode === 'boss' ? r.b : mode === 'mob' ? r.d - r.b : r.d, n: r.n, c: r.c, ty: r.ty }; }).filter(r => r.v > 0).sort((a, b) => b.v - a.v); }
 function dmTabs(x, y, w, id){ const bw = Math.floor(w / 3);
   DMODE.forEach(([k, lb], i) => { const on = (G.dmMode || 'all') === k, bx = x + i * bw; g.globalAlpha = on ? 1 : .6; R(bx, y, bw - 2, 13, on ? '#5a3a22' : '#000'); g.globalAlpha = 1; if(on) R(bx, y + 12, bw - 2, 1, COL.ember);
     T(lb, bx + Math.floor((bw - 2) / 2), y + 1, { f: 's', a: 'c', c: on ? COL.text : COL.dim }); hit(id + k, bx, y, bw - 2, 13, () => { G.dmMode = k; SFX.click(); }); }); }
@@ -2778,7 +2778,7 @@ function dmList(x, y, w, n, big){ // big: two lines per attack with hit count, c
     g.globalAlpha = big ? .55 : .5; R(x, yy + 1, Math.max(1, Math.round(w * r.v / top)), big ? 11 : 10, mixc(c, '#000000', .45)); g.globalAlpha = 1;
     T(big ? r.k : r.k.replace(/ \(.*\)$/, '').slice(0, 8), x + 2, yy, { f: 's', c: i === 0 ? '#ffe070' : COL.text, ol: COL.ink });
     T(fmtK(Math.round(r.v)) + ' · ' + Math.round(r.v / tot * 100) + '%', x + w - 1, yy, { f: 's', a: 'r', c: c, ol: COL.ink });
-    if(big) T('타격 ' + fmt(r.n) + '회' + (r.c ? ' · 치명 ' + Math.round(r.c / r.n * 100) + '%' : '') + ' · 1회 평균 ' + fmtK(Math.round(r.v / Math.max(1, r.n))), x + 8, yy + 12, { f: 's', c: COL.dim }); });
+    if(big) T((r.ty === 'magic' ? '마법' : '물리') + ' · 타격 ' + fmt(r.n) + '회' + (r.c ? ' · 치명 ' + Math.round(r.c / r.n * 100) + '%' : '') + ' · 1회 평균 ' + fmtK(Math.round(r.v / Math.max(1, r.n))), x + 8, yy + 12, { f: 's', c: COL.dim }); });
 }
 function dmTotals(x, y){ const D = (B && B.dsrc) || {}; let a = 0, b = 0; for(const k in D){ a += D[k].d; b += D[k].b; }
   T('총 ' + fmtK(Math.round(a)) + '  ·  잡몹 ' + fmtK(Math.round(a - b)) + '  ·  보스 ' + fmtK(Math.round(b)), x, y, { f: 's', c: COL.gold, ol: COL.ink }); }
@@ -2792,15 +2792,17 @@ function dmWidget(vy){ // a small see-through table in the corner, folds to one 
   T('내 딜량', x, y + 1, { f: 's', c: COL.dim, ol: COL.ink }); T('접기 ▴', x + w, y + 1, { f: 's', a: 'r', c: COL.dim, ol: COL.ink }); hit('dmwc', x + w - 34, y - 3, 38, 17, () => { S.opts.dmw = 0; save(); SFX.click(); });
   dmTabs(x, y + 14, w, 'dmwt'); dmList(x, y + 30, w, 5, false);
 }
-function dRec(m, src, amt, crit){ if(!(amt > 0) || !B) return; const D = B.dsrc || (B.dsrc = {}), r = D[src] || (D[src] = { d: 0, b: 0, n: 0, c: 0 }); r.d += amt; if(m.kind === 'boss') r.b += amt; r.n++; if(crit) r.c++; }
-// 치명타: only basic attacks. Base chance 0, except the dagger family; ×2 for everyone
-const critChance = () => (B.fam === 't' ? TWIN_CRIT : 0) + en('crit') * .07 + (B.fx === 'moon' ? .1 : B.fx === 'rainbow' ? .05 : 0) + (B.line === 't1' ? .25 : 0) + (tr('crit') ? .1 : 0);
+function dRec(m, src, amt, crit, ty){ if(!(amt > 0) || !B) return; const D = B.dsrc || (B.dsrc = {}), r = D[src] || (D[src] = { d: 0, b: 0, n: 0, c: 0, ty: ty || dType({ src }) }); r.d += amt; if(m.kind === 'boss') r.b += amt; r.n++; if(crit) r.c++; }
+// every hit is 물리 (phys) or 마법 (magic), told by where it came from. 치명타: physical basic attacks only. Base chance 0, except the dagger family; ×2 for everyone
+const DTYPE_MAGIC = /마법|점멸|번개|불길|화상|중독|빛기둥|융합|성역|심판|처치 폭발|몬스터 폭발|오류|메아리/;
+const dType = (o) => o.ty || (o.src === '필살기' ? (B.cls === 'magic' ? 'magic' : 'phys') : DTYPE_MAGIC.test(o.src || '') ? 'magic' : 'phys');
+const critChance = () => (B.fam === 't' ? TWIN_CRIT : 0) + en('crit') * .07 + (B.fx === 'moon' ? .1 : B.fx === 'rainbow' ? .05 : 0) + (tr('crit') ? .1 : 0);
 const critMul = () => 2 + (B.fx === 'stars' ? .5 : 0) + sk('vital') * .5 + (tr('crit') ? .8 : 0);
 function svHit(m, base, o = {}){
   if(m.die !== 0 || B.over) return;
   const hp0 = m.hp;
   const fx = B.fx;
-  const crit = !!o.basic && (Math.random() < critChance() || B.critT > 0); // only basic attacks crit (skills may get it later)
+  const ty = dType(o), crit = !!o.basic && ty === 'phys' && (Math.random() < critChance() || B.critT > 0); // only physical basic attacks crit (a magic-crit trait may come later)
   let mult = base * svDmgMul() * (crit ? critMul() : 1) * (tr('bossh') && m.kind === 'boss' ? 1.25 : 1) * (.9 + Math.random() * .2);
   if(B.cls === 'magic' && !o.dot) mult *= 1 + sk('nova') * .2;
   if(fx === 'void' && (m.kind === 'elite' || m.kind === 'boss')) mult *= 1.3;
@@ -2813,7 +2815,7 @@ function svHit(m, base, o = {}){
   if(B.line === 't2' && !o.dot && !o.depth && !o.orb && !B.feverLock){ B.dance++; if(B.dance >= 10 - sk('volley') * 2){ B.dance = 0; svVolley(); SFX.success(14); B.nums.push({ x: B.P.x, y: B.P.y - 24, v: '칼날 비!', crit: true, t: 0, c: '#ff8ad8' }); } }
   if(!o.dot && GQ()){ B.hits = B.hits || []; if(B.hits.length < 48) B.hits.push({ x: m.x + (Math.random() - .5) * 6, y: m.y - m.r * .5 + (Math.random() - .5) * 6, t: 0, crit, c: o.c || (crit ? '#ffe070' : '#ffffff'), a: Math.random() * 3.14 }); }
   if(dmg >= m.hp && m.hp > 0) m.ok = dmg / m.hp; // overkill: how many times over the last hit could have killed it
-  dRec(m, o.src || (o.dot ? '지속 피해' : '기타'), Math.min(dmg, Math.max(0, m.hp)), crit);
+  dRec(m, o.src || (o.dot ? '지속 피해' : '기타'), Math.min(dmg, Math.max(0, m.hp)), crit, ty);
   m.hp -= dmg; m.hitT = .1;
   if(!o.dot){ for(let i = 0; i < (crit ? 4 : 2); i++){ const a = Math.random() * 6.28; G.parts.push({ x: m.x, y: m.y - m.r * .5, vx: Math.cos(a) * 110, vy: Math.sin(a) * 110 - 30, life: .18, max: .18, c: crit ? '#ffe070' : '#ffffff', grav: 220, streak: 1 }); } if(crit){ G.shake = Math.max(G.shake, 1.5); B.stars = B.stars || []; if(GQ()) B.stars.push({ x: m.x, y: m.y - m.r * .5, t: 0 }); if(B.stars.length > 30) B.stars.shift(); } }
   if(o.kb){ const d = Math.hypot(m.x - B.P.x, m.y - B.P.y) || 1, k = (m.kind === 'boss' ? .2 : 1) * (tr('g_storm') ? 2 : 1); m.kx += (m.x - B.P.x) / d * o.kb * k; m.ky += (m.y - B.P.y) / d * o.kb * k; }

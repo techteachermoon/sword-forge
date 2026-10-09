@@ -1237,7 +1237,7 @@ const BLN = ['', '축복 I', '축복 II', '축복 III', '축복 IV'];
 // and +30 up (가호 IV used to be drop-only) 500만 + 100만 a level. 축복 = 강화비 ×0.4; 보수 = 강화비 ×0.6 for each crack.
 const guardBase = L => L < 5 ? 0 : L < 15 ? (L - 4) * 30 : L < 25 ? (L - 14) * 800 : L < 30 ? (L - 24) * 300000 : 5000000 + (L - 30) * 1000000;
 // +0 → +20 climbs a steady ×1.12 a level (83 → 800, ~10× in all, it used to be 200×), then ×1.075 a level above +20.
-const ATK = L => Math.round(800 * Math.pow(L <= 20 ? 1.12 : 1.075, L - 20));
+const ATK = L => Math.round(800 * Math.pow(L <= 20 ? 1.12 : 1.1, L - 20)); // +12% a level up to +20 (the tutorial stretch), +10% after
 const PRICE = { wp: 6000 };
 const OLD_PRICE = { g: [0, 30, 800, 300000, 1000000], bl: [0, 30, 1500, 25000, 100000], rp: 5000 }; // what the old tickets were worth, for the refund
 const gradeBonus = (base, gr) => gr === 'PERFECT' ? Math.round(Math.min(4, Math.max(.3, base * .25)) * 10) / 10 : gr === 'GOOD' ? Math.round(Math.min(1.5, Math.max(.2, base * .1)) * 10) / 10 : 0;

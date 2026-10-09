@@ -1262,7 +1262,7 @@ function noteBest(){
   const l = lineOf(); S.lbest[l] = Math.max(S.lbest[l] || 0, S.lv);
   if(S.lv > 0){ if(!S.sid) S.sid = newSid(); const up = S.lv > (S.speak || 0); S.speak = Math.max(S.speak || 0, S.lv); if(up) swordSync(swordRec('alive')); } // the sword board
   if(needsJob()){ if(S.lv > S.best){ S.best = S.lv; rankPush(); } return; }
-  if(S.lv >= S.best){ const up = S.lv > S.best || S.bestId !== curId(); S.best = S.lv; S.bestId = curId(); if(up) rankPush(); }
+  if(S.lv >= S.best){ const up = S.lv > S.best || S.bestId !== curId(); S.best = S.lv; S.bestId = curId(); S.binfo = curInfo(); if(up) rankPush(); }
 }
 let dirty = false;
 function save(){ dirty = true; }
@@ -1538,7 +1538,7 @@ function openEnch(){
 }
 function pickEnch(k){
   const m = G.modal; if(!m || m.k !== 'ench' || G.t - m.t0 < .7 || !m.opts.includes(k)) return;
-  S.ench[k] = en(k) + 1; S.enchPend = Math.max(0, (S.enchPend || 0) - 1); G.modal = null;
+  S.ench[k] = en(k) + 1; S.enchPend = Math.max(0, (S.enchPend || 0) - 1); G.modal = null; infoTouch();
   const [nm, , r] = ENCH[k], c = RAR[r][1];
   G.flash = .35; G.flashC = c; G.ring = { t: 0, c }; SFX.success(r === 'L' ? 26 : r === 'R' ? 16 : 8);
   bigText(nm + (S.ench[k] > 1 ? ' Lv' + S.ench[k] : ''), ENCH[k][4](S.ench[k]), c, 2);
@@ -1781,7 +1781,7 @@ const engrReady = () => [0, 1, 2].some(i => S.lv >= ENGR_LV[i] && !(S.eng || [])
 function engrave(i, k){
   const t = i + 1;
   if(!ELS[k] || i < 0 || i >= engrOpen() || stoneN(k, t) < 1 || F.st !== 'idle'){ SFX.deny(); return; }
-  S.est[k + t]--; S.eng = (S.eng || []).slice(); S.eng[i] = k; engrSync();
+  S.est[k + t]--; S.eng = (S.eng || []).slice(); S.eng[i] = k; engrSync(); infoTouch();
   SFX.clang(); SFX.success(10 + t * 6); G.flash = .35; G.flashC = ELS[k][1]; G.ring = { t: 0, c: ELS[k][1] };
   bigText(ELS[k][0] + ' 각인 ' + TIER_N[i], '이 검의 ' + ELS[k][0] + ' 속성 +' + S.engr[k], ELS[k][1], 1.8);
   say('정으로 새겼다. ' + ELS[k][0] + '의 기운이 칼날에 스몄다.');
@@ -1926,6 +1926,8 @@ async function rankInit(){
   }catch(e){ RK.status = 'err'; }
   rankPush();
   if(S.sid && (S.speak || 0) >= 10) swordSync(swordRec('alive'));
+  (S.vault || []).forEach(pk => { if(pk.sid && (pk.speak || 0) >= 10) swordSync(packRec(pk, 'vault')); }); // older records learn their slots and enchants
+  if(!S.binfo && S.lv >= S.best && S.bestId === curId()) S.binfo = curInfo();
 }
 function cleanRow(id, d){
   if(!d || typeof d !== 'object') return null;
@@ -1938,7 +1940,8 @@ function cleanRow(id, d){
   const es = clamp(Math.floor(+d.es || 0), 0, 1e12), et = clamp(Math.floor(+d.et || 0), 0, 1e7), ed = clamp(Math.floor(+d.ed || 0), 0, 1e5);
   const ew = typeof d.ew === 'string' && WEP[d.ew] ? d.ew : '';
   const cx = clamp(Math.floor(+d.cx || 0), 0, WTOTAL());
-  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx };
+  const inf = typeof d.info === 'string' ? d.info.split('#') : [];
+  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx, bi: infoParse(inf[0]), ei: infoParse(inf[1]) };
 }
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
@@ -1961,15 +1964,26 @@ function partyPull(size){
 // ---- the sword board (supabase_swords.sql): one row per sword that reached +10, kept after it breaks or is sold ----
 const newSid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const packId = pk => (pk.lv < 10 ? 'c' : lineAt(pk.line || 'c', pk.lv)) + ':' + pk.lv;
-const swordRec = fate => ({ id: S.sid, wid: curId(), lv: S.lv, peak: Math.max(S.speak || 0, S.lv), fate });
-const packRec = (pk, fate) => ({ id: pk.sid, wid: packId(pk), lv: pk.lv, peak: Math.max(pk.speak || 0, pk.lv), fate });
+// what a sword carries besides its blade, packed small for the boards: element slots | enchants  ("fire,,bolt|luck2,might1")
+const infoOf = (eng, ench) => (eng || []).slice(0, 3).map(k => ELS[k] ? k : '').join(',') + '|' + Object.keys(ench || {}).filter(k => ENCH[k] && ench[k] > 0).map(k => k + Math.min(99, ench[k] | 0)).join(',');
+const curInfo = () => infoOf(S.eng, S.ench);
+function infoTouch(){ if(S.sid && (S.speak || 0) >= 10) swordSync(swordRec('alive')); if(S.lv >= S.best && S.bestId === curId()){ S.binfo = curInfo(); rankPush(); } } // a new enchant or slot shows on the boards
+function infoParse(s){
+  if(typeof s !== 'string' || !s.includes('|') || s.length > 400) return null;
+  const [a, b] = s.split('|'), eng = a.split(',').slice(0, 3).map(k => ELS[k] ? k : ''), ench = [];
+  for(const t of (b || '').split(',')){ const m = /^([a-z_]+?)(\d+)$/.exec(t); if(m && ENCH[m[1]]) ench.push([m[1], +m[2]]); }
+  return { eng, ench };
+}
+const swordRec = fate => ({ id: S.sid, wid: curId(), lv: S.lv, peak: Math.max(S.speak || 0, S.lv), fate, info: curInfo() });
+const packRec = (pk, fate) => ({ id: pk.sid, wid: packId(pk), lv: pk.lv, peak: Math.max(pk.speak || 0, pk.lv), fate, info: infoOf(pk.eng, pk.ench) });
 const SWQ = new Map(); let swT = null;
 function swordSync(r){ if(!r || !r.id || r.peak < 10) return; SWQ.set(r.id, r); if(!swT) swT = setTimeout(swordFlush, 1200); }
 async function swordFlush(){
   swT = null; if(!RK.web || !RK.uid || RK.noSwords || !S.name || !SWQ.size) return;
-  const rows = [...SWQ.values()].map(r => ({ id: r.id, uid: RK.uid, room: roomKey(), name: S.name, title: S.title || '', wid: WEP[r.wid] ? r.wid : '', peak: r.peak, lv: r.fate === 'broken' || r.fate === 'sold' ? 0 : r.lv, fate: r.fate, updated_at: new Date().toISOString() })); SWQ.clear();
+  const rows = [...SWQ.values()].map(r => ({ id: r.id, uid: RK.uid, room: roomKey(), name: S.name, title: S.title || '', wid: WEP[r.wid] ? r.wid : '', peak: r.peak, lv: r.fate === 'broken' || r.fate === 'sold' ? 0 : r.lv, fate: r.fate, updated_at: new Date().toISOString(), ...(RK.noSwInfo ? {} : { info: r.info || '' }) })); const keep = [...SWQ.values()]; SWQ.clear();
   try{ await sbFetch('/rest/v1/swords?on_conflict=id', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify(rows) }); RK.swAt = {}; }
-  catch(e){ if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; else rows.forEach(r => SWQ.has(r.id) || SWQ.set(r.id, Object.assign({}, r))); }
+  catch(e){ if(!RK.noSwInfo && e && e.status === 400 && /info/.test(e.message || '')){ RK.noSwInfo = true; keep.forEach(r => SWQ.has(r.id) || SWQ.set(r.id, r)); swordFlush(); return; } /* no 각인 column yet (supabase_info.sql): save without it */
+    if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; else keep.forEach(r => SWQ.has(r.id) || SWQ.set(r.id, r)); }
 }
 // boards read on demand: 'cur' = swords that still exist (in hand or in the vault), 'all' = every recorded sword
 function swordPull(kind){
@@ -1980,7 +1994,7 @@ function swordPull(kind){
   const q = kind === 'cur' ? 'fate=in.(alive,vault)&order=lv.desc,peak.desc,updated_at.asc' : 'order=peak.desc,updated_at.asc';
   (async () => { try{ const rows = await sbFetch('/rest/v1/swords?select=*&' + scope + '&' + q + '&limit=100', { headers: await sbAuthH() });
       RK.sw[kind] = (rows || []).map(r => { let nm = String(r.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 8); if(!nm) return null; if(badName(nm)) nm = '(가린 이름)';
-        return { id: r.uid, sid: r.id, name: nm, title: TITLES.has(r.title) ? r.title : '', wid: WEP[r.wid] ? r.wid : '', peak: clamp(+r.peak || 0, 0, MAX), lv: clamp(+r.lv || 0, 0, MAX), fate: r.fate, at: r.updated_at }; }).filter(Boolean); RK.noSwords = false; }
+        return { id: r.uid, sid: r.id, name: nm, title: TITLES.has(r.title) ? r.title : '', wid: WEP[r.wid] ? r.wid : '', peak: clamp(+r.peak || 0, 0, MAX), lv: clamp(+r.lv || 0, 0, MAX), fate: r.fate, at: r.updated_at, info: infoParse(r.info) }; }).filter(Boolean); RK.noSwords = false; }
     catch(e){ if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; }
     RK.swBusy = false; })();
 }
@@ -1990,11 +2004,13 @@ function rankPush(){
     RK.timer = null;
     if(!RK.db || !RK.uid || RK.writable === false || !S.name || RK.busy) return;
     const cb = clearedBest(), eb = S.eb || { s: 0, t: 0, d: 0 }, doc = { name: S.name, title: S.title || '', best: S.best, stage: cb.s, diff: cb.d, sv: 2, wep: wepOf(S.bestId).line, es: eb.s || 0, et: eb.t || 0, ed: eb.d || 0, ew: WEP[eb.w] ? eb.w : '' };
-    if(!RK.noCx) doc.cx = foundCount(); /* 도감: weapons found, over all weapons */
+    if(!RK.noCx) doc.cx = foundCount();
+    if(RK.web && !RK.noInfo) doc.info = (S.binfo || '') + '#' + (eb.i || ''); /* 툴팁: the best sword's and the endless run's slots and enchants */ /* 도감: weapons found, over all weapons */
     const key = JSON.stringify(doc); if(key === RK.last) return;
     RK.busy = true;
     try{ await RK.db.doc('scores/' + RK.uid).set(doc); RK.last = key; RK.writable = true; if(RK.web) setTimeout(rankRefresh, 300); }
-    catch(e){ if(RK.web && !RK.noCx && e && e.status === 400 && /cx/.test(e.message || '')){ RK.noCx = true; RK.busy = false; rankPush(); return; } /* the board has no 도감 column yet (supabase_codex.sql): keep saving without it */
+    catch(e){ if(RK.web && !RK.noInfo && e && e.status === 400 && /info/.test(e.message || '')){ RK.noInfo = true; RK.busy = false; rankPush(); return; }
+      if(RK.web && !RK.noCx && e && e.status === 400 && /cx/.test(e.message || '')){ RK.noCx = true; RK.busy = false; rankPush(); return; } /* the board has no 도감 column yet (supabase_codex.sql): keep saving without it */
       if(e && (e.code === 'invalid_argument' || e.code === 'not_granted' || e.status === 401 || e.status === 403)) RK.writable = false; }
     RK.busy = false;
   }, 1500);
@@ -2148,7 +2164,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
   }
   const t = Math.round(B.t), best = S.eb || { s: 0 };
   B.newBest = B.n > (best.d || 0) || (B.n === (best.d || 0) && B.score > (best.s || 0)); /* the floor counts first; the score only breaks a tie */
-  if(B.newBest){ S.eb = { s: B.score, t, d: B.n, w: B.wid }; /* w: the sword used in that run */ banner('ach', '무한 도전 신기록', B.n + '층 · ' + fmt(B.score) + '점'); rankPush(); }
+  if(B.newBest){ S.eb = { s: B.score, t, d: B.n, w: B.wid, i: curInfo() }; /* w: the sword used in that run */ banner('ach', '무한 도전 신기록', B.n + '층 · ' + fmt(B.score) + '점'); rankPush(); }
   log('무한 도전 ' + B.n + '층 · ' + fmt(B.score) + '점'); save();
 }
 // ===================== together (같이 하기): up to 4 friends with the same class code and room number climb one endless run =====================
@@ -3937,6 +3953,7 @@ function drawSwordBoard(kind){
     R(24, y + 3, 44, 28, '#0e0906');
     const wid = WEP[r.wid] ? r.wid : 'c:' + Math.min(9, L), wok = !!WEP[wid];
     if(wok){ const sw = swordFrame(wid, G.t), sc = Math.min(1, 40 / sw.W, 24 / Math.max(1, sw.H || 24)); g.save(); g.translate(46 - sw.W * sc / 2, y + 17 - sw.cy * sc); g.scale(sc, sc); drawSword(wid, 0, 0, G.t, { still: 1, noGlow: true }); g.restore(); }
+    rkTipAt(wid, L, r.info, y, rowH, top, h, r.fate);
     const wc = glowOf(wid, G.t) || COL.text;
     T('+' + L + ' ' + (WEP[r.wid] ? wName(r.wid) : ''), 74, y + 3, { f: 'b', c: r.fate === 'broken' ? mixc(wc, '#000000', .25) : wc });
     const nw = T(r.name, 74, y + 19, { f: 's', c: COL.text }); if(r.title) T(r.title, 78 + nw, y + 19, { f: 's', c: COL.ember });
@@ -3947,7 +3964,31 @@ function drawSwordBoard(kind){
   });
   g.restore(); scrollbar(st, top, h);
 }
-function drawRank(){
+// hover (or tap, on a phone) a sword on the boards: its tree, element slots and enchants
+function rkTipAt(wid, L, info, y, rowH, top, h, fate){
+  const x = UI.px - OX, yy = UI.py - OY; if(UI.drag || G.modal || x < 4 || x > 266 || yy < Math.max(y, top) || yy > Math.min(y + rowH - 2, top + h)) return;
+  G.rkTip = { wid, L, info, fate, y: Math.min(y + rowH - 2, top + h) };
+}
+function rkTipDraw(){
+  const tp = G.rkTip; if(!tp) return;
+  const w = WEP[tp.wid], col = glowOf(tp.wid, G.t) || COL.text, W = 196, items = [];
+  const path = []; for(let l = w ? w.line : 'c'; l; l = WL[l].par) path.unshift(l);
+  items.push([[['+' + tp.L + ' ' + (w && w.L === tp.L ? w.name : ''), col]], 'b']);
+  items.push([[['계열 ', COL.dim], ...path.map((k, i) => [(i ? '→ ' : '') + WL[k].n + ' ', i === path.length - 1 ? (WL[k].col || COL.text) : COL.text])], 's']);
+  if(tp.info){
+    const sl = [['각인 ', COL.dim]]; ENGR_LV.forEach((lv, i) => { const k = tp.info.eng[i]; sl.push([(i ? '· ' : '') + (k ? ELS[k][0] : tp.L >= lv ? '빈칸' : '잠김(+' + lv + ')') + ' ', k ? ELS[k][1] : COL.faint]); }); items.push([sl, 's']);
+    const en = tp.info.ench.map(([k, n]) => [ENCH[k][0] + (n > 1 ? ' Lv' + n : ''), ENCH[k][2] === 'L' ? COL.gold : ENCH[k][2] === 'R' ? '#8ad8ff' : COL.text]);
+    let line = [['인챈트 ', COL.dim]], lw = tw('인챈트 ', 's'); if(!en.length) line.push(['없음', COL.faint]);
+    en.forEach(([t, c], i) => { const s = t + (i < en.length - 1 ? ', ' : ''), sw = tw(s, 's'); if(lw + sw > W - 16 && line.length > 1){ items.push([line, 's']); line = [['', COL.dim]]; lw = 12; } line.push([s, c]); lw += sw; });
+    items.push([line, 's']);
+  } else items.push([[['각인·인챈트 기록 없음 (예전 기록)', COL.faint]], 's']);
+  if(tp.fate === 'broken') items.push([[['이 검은 파괴되었다', COL.bad]], 's']);
+  const hh = 8 + items.length * 13, px = clamp(UI.px - OX - W / 2, 4, 266 - W), py = tp.y + hh + 4 > 430 ? tp.y - 36 - hh : tp.y + 2;
+  R(px - 1, py - 1, W + 2, hh + 2, COL.ink); R(px, py, W, hh, '#241912'); R(px, py, W, 1, col);
+  items.forEach(([segs, f], i) => { let x = px + 6 + (i && segs[0][0] === '' ? 12 : 0); for(const [t, c] of segs){ if(!t) continue; x += T(t, x, py + 5 + i * 13, { f, c }); } });
+}
+function drawRank(){ G.rkTip = null; drawRank0(); rkTipDraw(); }
+function drawRank0(){
   R(0, 26, VW, 408, '#140d0a');
   T('랭킹', 8, 31, { f: 'b' });
   const etab = (G.rankTab || 'endless') === 'endless'; // 무한 도전 board comes first
@@ -3988,6 +4029,7 @@ function drawRank(){
       let wid = (r.best < 10 ? 'c' : lineAt(r.wep, r.best)) + ':' + r.best; if(!WEP[wid]) wid = 'c:' + Math.min(9, r.best); // no class picked yet: show the plain blade
       if(etab) wid = r.ew || ''; // 무한 도전: the sword that run was played with (older records didn't keep it)
       const wok = !!WEP[wid], wL = wok ? WEP[wid].L : r.best;
+      if(!(psz > 1 && r.pw) && (wok || !etab)) rkTipAt(wid, etab ? wL : r.best, etab ? r.ei : r.bi, y, rowH, top, h);
       R(24, y + 3, 44, 28, '#0e0906');
       if(wok){ const sw = swordFrame(wid, G.t), sc = Math.min(1, 40 / sw.W, 24 / Math.max(1, sw.H || 24)); g.save(); g.translate(46 - sw.W * sc / 2, y + 17 - sw.cy * sc); g.scale(sc, sc); drawSword(wid, 0, 0, G.t, { still: 1, noGlow: true }); g.restore(); }
       const nw = T(r.name, 74, y + 3, { f: 'b', c: COL.text });

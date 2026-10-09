@@ -3305,10 +3305,7 @@ function survUpdate(dt){
       const k = Math.min(1, dt * 14); if(Math.abs(m.tx - m.x) + Math.abs(m.ty - m.y) > 90){ m.x = m.tx; m.y = m.ty; } else { m.x += (m.tx - m.x) * k; m.y += (m.ty - m.y) * k; }
       continue; }
     if(m.hcd > 0) m.hcd -= dt;
-    if(m.kx || m.ky){ // knockback never throws a monster that is inside the map out of it
-      const e = (m.r || 8) + 2, x0 = e, x1 = SV.ww - e, y0 = SV.y0 + e, y1 = SV.y0 + SV.wh - e, inside = m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1;
-      m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; if(inside){ m.x = clamp(m.x, x0, x1); m.y = clamp(m.y, y0, y1); } }
-    m.kx *= .8; m.ky *= .8;
+    m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; m.kx *= .8; m.ky *= .8;
     if(m.kind === 'gold'){ m.life -= dt; if(m.life <= 0){ m.die = .001; m.fled = true; } }
     if(m.burnT > 0) m.burnT -= dt; if(m.poisonT > 0) m.poisonT -= dt; if(svDotTick(m, dt)) continue;
     if(m.slowT > 0) m.slowT -= dt; if(m.steam > 0) m.steam -= dt;
@@ -3326,6 +3323,9 @@ function survUpdate(dt){
   // keep monsters from stacking on one spot
   const live = B.mons.filter(m => m.die === 0);
   if(!rep) for(let i = 0; i < live.length; i++) for(let j = i + 1; j < live.length; j++){ const a = live[i], b = live[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), md = (a.r + b.r) * .8; if(d > 0 && d < md){ const k = (md - d) / d * .5; a.x -= dx * k; a.y -= dy * k; b.x += dx * k; b.y += dy * k; } }
+  // once inside the map a monster stays inside: knockback, charges and crowd pushes all stop at the edge
+  if(!rep) for(const m of live){ const e = (m.r || 8) + 2, x0 = e, x1 = SV.ww - e, y0 = SV.y0 + e, y1 = SV.y0 + SV.wh - e;
+    if(m.inMap){ m.x = clamp(m.x, x0, x1); m.y = clamp(m.y, y0, y1); } else if(m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1) m.inMap = true; }
   B.mons = B.mons.filter(m => !(m.die > .4));
   // sword waves
   for(let i = B.shots.length - 1; i >= 0; i--){

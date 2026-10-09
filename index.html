@@ -3306,7 +3306,10 @@ function survUpdate(dt){
       const k = Math.min(1, dt * 14); if(Math.abs(m.tx - m.x) + Math.abs(m.ty - m.y) > 90){ m.x = m.tx; m.y = m.ty; } else { m.x += (m.tx - m.x) * k; m.y += (m.ty - m.y) * k; }
       continue; }
     if(m.hcd > 0) m.hcd -= dt;
-    m.x += m.kx * dt * 6; m.y += m.ky * dt * 6; m.kx *= .8; m.ky *= .8;
+    { const e = (m.r || 8) + 2, kx = m.kx * dt * 6, ky = m.ky * dt * 6; // knockback stops at the map edge, and never pushes one that is still outside any further out
+      m.x = kx < 0 ? Math.max(m.x + kx, Math.min(m.x, e)) : Math.min(m.x + kx, Math.max(m.x, SV.ww - e));
+      m.y = ky < 0 ? Math.max(m.y + ky, Math.min(m.y, SV.y0 + e)) : Math.min(m.y + ky, Math.max(m.y, SV.y0 + SV.wh - e)); }
+    m.kx *= .8; m.ky *= .8;
     if(m.kind === 'gold'){ m.life -= dt; if(m.life <= 0){ m.die = .001; m.fled = true; } }
     if(m.burnT > 0) m.burnT -= dt; if(m.poisonT > 0) m.poisonT -= dt; if(svDotTick(m, dt)) continue;
     if(m.slowT > 0) m.slowT -= dt; if(m.steam > 0) m.steam -= dt;

@@ -1914,6 +1914,8 @@ const SB_AUTH = 'sword-forge-sb';
 // two web addresses share one Supabase: the school site, and a public one for everyone else.
 // Boards and together-rooms are kept apart by a one-letter prefix on the public site, so outsiders never land on a class board.
 const SCHOOL_HOSTS = ['swordforge.pages.dev'];
+// 테스트 서버: a branch preview (test.swordforge.pages.dev and the like). It reads the real boards but never writes to them, and its together-rooms are separate
+const TEST_SITE = /\.(swordforge|forgegame)\.pages\.dev$/.test(location.hostname) || /[?&]test\b/.test(location.search);
 const isSchoolSite = () => { const h = location.hostname; return SCHOOL_HOSTS.some(s => h === s || h.endsWith('.' + s)); };
 const RW = () => isSchoolSite() ? '반' : '그룹';
 const roomKey = () => isSchoolSite() ? (S.room || '').slice(0, 12) : '~' + (S.room || '').slice(0, 11);
@@ -2004,7 +2006,7 @@ function cleanRow(id, d){
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
 // party boards (supabase_party.sql): one row per player per party size, their best floor in that size
-async function partyPush(size){
+async function partyPush(size){ if(TEST_SITE) return;
   const r = (S.ebp || {})[size]; if(!r || !RK.web || !RK.uid || RK.noParty || !S.name) return;
   try{ await sbFetch('/rest/v1/party?on_conflict=id,size', { method: 'POST', headers: Object.assign({ Prefer: 'resolution=merge-duplicates,return=minimal' }, await sbAuthH()), body: JSON.stringify([{ id: RK.uid, size, room: roomKey(), name: S.name, title: S.title || '', es: r.s, et: r.t, ed: r.d, ew: WEP[r.w] ? r.w : '', pw: String(r.pw || '').slice(0, 60) }]) }); RK.pbAt = {}; }
   catch(e){ if(e && (e.status === 404 || /party/.test(e.message || ''))) RK.noParty = true; }
@@ -2035,7 +2037,7 @@ function infoParse(s){
 const swordRec = fate => ({ id: S.sid, wid: curId(), lv: S.lv, peak: Math.max(S.speak || 0, S.lv), fate, info: curInfo() });
 const packRec = (pk, fate) => ({ id: pk.sid, wid: packId(pk), lv: pk.lv, peak: Math.max(pk.speak || 0, pk.lv), fate, info: infoOf(pk.eng, pk.ench) });
 const SWQ = new Map(); let swT = null;
-function swordSync(r){ if(!r || !r.id || r.peak < 10) return; SWQ.set(r.id, r); if(!swT) swT = setTimeout(swordFlush, 1200); }
+function swordSync(r){ if(TEST_SITE) return; if(!r || !r.id || r.peak < 10) return; SWQ.set(r.id, r); if(!swT) swT = setTimeout(swordFlush, 1200); }
 async function swordFlush(){
   swT = null; if(!RK.web || !RK.uid || RK.noSwords || !S.name || !SWQ.size) return;
   const rows = [...SWQ.values()].map(r => ({ id: r.id, uid: RK.uid, room: roomKey(), name: S.name, title: S.title || '', wid: WEP[r.wid] ? r.wid : '', peak: r.peak, lv: r.fate === 'broken' || r.fate === 'sold' ? 0 : r.lv, fate: r.fate, updated_at: new Date().toISOString(), ...(RK.noSwInfo ? {} : { info: r.info || '' }) })); const keep = [...SWQ.values()]; SWQ.clear();
@@ -2056,7 +2058,7 @@ function swordPull(kind){
     catch(e){ if(e && (e.status === 404 || /swords/.test(e.message || ''))) RK.noSwords = true; }
     RK.swBusy = false; })();
 }
-function rankPush(){
+function rankPush(){ if(TEST_SITE) return;
   if(RK.timer) clearTimeout(RK.timer);
   RK.timer = setTimeout(async () => {
     RK.timer = null;
@@ -2256,7 +2258,7 @@ async function mpJoin(tk, party, size){
     if(!MP.cli) MP.cli = window.supabase.createClient(SB.url, SB.key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { params: { eventsPerSecond: 40 } } });
     mpLeave();
     MP.me = Math.random().toString(36).slice(2, 10); MP.party = party;
-    const ch = MP.cli.channel('sf-together-' + roomKey() + '-' + size + 'p-' + party, { config: { broadcast: { self: false } } });
+    const ch = MP.cli.channel((TEST_SITE ? 'sf-test-' : 'sf-together-') + roomKey() + '-' + size + 'p-' + party, { config: { broadcast: { self: false } } });
     ch.on('broadcast', { event: 'p' }, m => mpRecv(m.payload));
     ch.on('broadcast', { event: 'w' }, m => mpWorld(m.payload));
     ch.on('broadcast', { event: 'f' }, m => mpFloor(m.payload));
@@ -4590,6 +4592,7 @@ function drawOverlays(dt){
     }
   }
   if(G.toast){ G.toast.t += dt; if(G.toast.t > 1.4) G.toast = null; else { const w = tw(G.toast.msg, 'b') + 24, x = Math.round((VW - w) / 2); g.globalAlpha = .85; R(x, 30, w, 20, COL.ink); R(x + 1, 31, w - 2, 18, '#2a1e18'); g.globalAlpha = 1; T(G.toast.msg, VW / 2, 34, { f: 'b', a: 'c', ol: COL.ink }); } } // notices sit at the top, never over the middle
+  if(TEST_SITE){ const lb = 'TEST 서버'; g.globalAlpha = .7; R(VW / 2 - tw(lb, 's') / 2 - 4, 1, tw(lb, 's') + 8, 12, '#5a1010'); g.globalAlpha = 1; T(lb, VW / 2, 2, { f: 's', a: 'c', c: '#ffd0c0' }); }
   if(G.hint){ G.hint.t += dt; if(G.hint.t > 6) G.hint = null; else { const a = Math.min(1, G.hint.t * 3, (6 - G.hint.t) * 2), w = tw(G.hint.msg, 's') + 16, x = Math.round((VW - w) / 2), y = G.toast ? 54 : 30;
     g.globalAlpha = .55 * a; R(x, y, w, 15, '#000000'); g.globalAlpha = a; T(G.hint.msg, VW / 2, y + 3, { f: 's', a: 'c', c: '#ffe8a0', ol: COL.ink }); g.globalAlpha = 1; } }
 }

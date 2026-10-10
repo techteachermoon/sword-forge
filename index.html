@@ -2886,6 +2886,7 @@ function monAct(m, dt, P, d, dx, dy){ // returns true if it handled movement its
   return false;
 }
 const monNm = k => { for(const a of AREAS){ const j = a.mons.indexOf(k); if(j >= 0) return a.monN[j]; if(a.boss === k) return a.bossN; } return k; };
+const SPAWN_R = 285; // monsters appear this far from the player
 function svSpawn(kind, fk){ // fk: this species, not a random one (split slimes, 테스트룸): name, armour, speed, ai and toughness all follow it
   const A = AREAS[B.ai], r0 = Math.random(), i = r0 < .4 ? 0 : r0 < .75 ? 1 : 2;
   let key = fk || A.mons[i], name = fk ? monNm(fk) : A.monN[i], ms = MST[key] || [30, 1], hpK = 3 * ms[1], spd = ms[0] * 1.15 * (.9 + Math.random() * .2), dmg = 9, xp = 1, gK = .35, fast = false;
@@ -2894,10 +2895,11 @@ function svSpawn(kind, fk){ // fk: this species, not a random one (split slimes,
   if(B.fx === 'clock') spd *= .9;
   if(kind === 'gold'){ key = 't_slime'; name = '황금 슬라임'; hpK = 8; spd = 40; dmg = 0; xp = 3; gK = 12; }
   if(kind === 'boss'){ key = fk || A.boss; name = A.bossN; hpK = 14 + B.ai * 7; spd = 16; dmg = 26; xp = 25; gK = 25; }
-  const side = Math.floor(Math.random() * 4), AN = B.mp ? mpAnchor() : null, P = AN || B.P;
-  const cm = AN ? { x: AN.x - VW / 2, y: AN.y - SV.y0 - SV.h / 2 } : svCam();
-  let x = cm.x + (side === 0 ? -12 : side === 1 ? VW + 12 : Math.random() * VW), y = SV.y0 + cm.y + (side === 2 ? -12 : side === 3 ? SV.h + 12 : Math.random() * SV.h);
-  if(kind === 'boss'){ x = cm.x + (P.x - cm.x < VW / 2 ? VW - 20 : 20); y = SV.y0 + cm.y + 30; }
+  const AN = B.mp ? mpAnchor() : null, P = AN || B.P;
+  // on a ring around the player, the same distance on every screen (just past the corner of a 480×270 view), kept inside the map
+  const ok = (x, y) => x >= 30 && x <= SV.ww - 30 && y >= SV.y0 + 30 && y <= SV.y0 + SV.wh - 30;
+  let x = P.x, y = P.y; for(let t = 0; t < 12; t++){ const a = Math.random() * Math.PI * 2; x = P.x + Math.cos(a) * SPAWN_R; y = P.y + Math.sin(a) * SPAWN_R; if(ok(x, y)) break; }
+  x = clamp(x, 30, SV.ww - 30); y = clamp(y, SV.y0 + 30, SV.y0 + SV.wh - 30);
   // deeper hurts more, and a sword below the stage's recommended level hurts a lot more: that is what sends you back to the forge
   const under = Math.max(0, stRec(B.s) - S.lv);
   dmg = Math.round(dmg * (1 + B.ai * .6) * (EARLY[B.ai] + 1) / 2 * (1 + under * .1) * (1 + B.st / (B.boss ? 240 : Math.max(120, B.need * 1.2))) * dif()[3]); // stalling on a stage gets dangerous

@@ -22,11 +22,17 @@ body.max{padding:0}body.max #screen,:fullscreen #screen{box-shadow:none}
 // FW×FH is the whole canvas (fills the window). VW×VH is the box the current screen draws into:
 // the battle uses the whole canvas, every other screen is the 270×480 layout centred at (OX, OY).
 let FW = 270, FH = 480, VW = 270, VH = 480, OX = 0, OY = 0;
-// 전투 화면 고정 (test): every device sees the same 853×480 battle (세로 옵션: 480×853). S.opts.view === 'old' brings back the fit-to-window battle
-const VIEW_FIX = [853, 480];
-let VROT = false, US = 1, BS = 1; // VROT: the landscape battle on an upright phone is drawn turned 90°; US: scale of a shrunk 270×480 layout (hit boxes follow it); BS: canvas pixels per game pixel in the battle (2 for the landscape view, so shrunk windows keep readable letters)
-const viewPaused = () => VIEW_FIX[1] < 480 && (!!G.modal || !!(B && (B.pick || B.paused || B.over))); // windows (cards, pause, result) are laid out for 270×480: while one is up the battle is drawn the old way
-const viewFixed = () => typeof S === 'object' && !!S && !!S.opts && (TEST_SITE ? S.opts.view !== 'old' : S.opts.view === 'fixed'); // test server: on unless switched back
+// 화면 모드: 📱 모바일 (270×480, held sideways 480×270) or 💻 PC (853×480). The battle range never changes with the window;
+// the mode is picked before a run (default: by device), locked for the run, and goes with the endless record
+let VROT = false, US = 1, BS = 1; // VROT: the PC view on an upright phone is drawn turned 90°; US: scale of a shrunk 270×480 layout (hit boxes follow it); BS: canvas pixels per game pixel
+const prefMode = () => (typeof S === 'object' && S && S.opts && (S.opts.scr === 'm' || S.opts.scr === 'p')) ? S.opts.scr : (matchMedia && matchMedia('(pointer: coarse)').matches ? 'm' : 'p');
+const curMode = () => (typeof B === 'object' && B && B.scr) || prefMode();
+// the battle view for this window: [w, h, turned]. Windows (cards, pause, result) are laid out for 270×480: while one is up on a 270-high view, the battle is drawn the old way
+function battleView(aw, ah){
+  const m = curMode(), up = ah > aw;
+  if(m === 'm' && !up && (G.modal || (B && (B.pick || B.paused || B.over)))) return null;
+  return m === 'm' ? (up ? [270, 480, false] : [480, 270, false]) : [853, 480, up];
+}
 const cv = document.getElementById('screen');
 const sx = cv.getContext('2d');
 const lc = document.createElement('canvas'); lc.width = VW; lc.height = VH;
@@ -40,8 +46,9 @@ const GQ = () => { const o = typeof S !== 'undefined' && S && S.opts; if(!o) ret
 
 function fit(){
   const aw = Math.max(200, document.documentElement.clientWidth || innerWidth), ah = Math.max(300, innerHeight || 600);
-  let s, fixed = false; try{ fixed = G.scr === 'battle' && viewFixed() && !viewPaused(); }catch(_){} VROT = false; BS = 1; // (early resizes run before G exists)
-  if(fixed){ const port = !!S.opts.viewPort; FW = port ? VIEW_FIX[1] : VIEW_FIX[0]; FH = port ? VIEW_FIX[0] : VIEW_FIX[1]; VROT = !port && ah > aw; s = VROT ? Math.min(ah / FW, aw / FH) : Math.min(aw / FW, ah / FH); }
+  let s, view = null; try{ if(G.scr === 'battle') view = battleView(aw, ah); }catch(_){} VROT = false; BS = 1; // (early resizes run before G exists)
+  const fixed = !!view;
+  if(fixed){ FW = view[0]; FH = view[1]; VROT = view[2]; s = VROT ? Math.min(ah / FW, aw / FH) : Math.min(aw / FW, ah / FH); }
   else if(aw / ah >= 270 / 480){ s = ah / 480; FH = 480; FW = Math.round(aw / s); }
   else { s = aw / 270; FW = 270; FH = Math.round(ah / s); }
   SCALE = s;
@@ -2046,7 +2053,7 @@ function sbDb(){
       let alive = true, timer = null, seq = 0;
       const pull = async () => {
         if(!alive) return; clearTimeout(timer); const mine = ++seq, key = rankScopeKey(), scope = rankScopeQuery();
-        try{ const rows = await sbFetch('/rest/v1/scores?select=*&' + scope + '&order=' + (field === 'ed' ? 'ed.desc,es.desc,et.asc,id.asc' : field + '.' + (dir || 'asc')) + '&limit=' + (G.rankScope === 'room' && S.room ? n || 60 : 100), { headers: await sbAuthH() }); if(alive && mine === seq && key === rankScopeKey()) next({ docs: (rows || []).map(r => ({ id: r.id, data: () => r })) }); }
+        try{ const rows = await sbFetch('/rest/v1/scores?select=*&' + scope + '&order=' + (/^ed[mp]?$/.test(field) ? field + '.desc,' + field.replace('d', 's') + '.desc,' + field.replace('d', 't') + '.asc,id.asc' + (field !== 'ed' ? '&' + field + '=gt.0' : '') : field + '.' + (dir || 'asc')) + '&limit=' + (G.rankScope === 'room' && S.room ? n || 60 : 100), { headers: await sbAuthH() }); if(alive && mine === seq && key === rankScopeKey()) next({ docs: (rows || []).map(r => ({ id: r.id, data: () => r })) }); }
         catch(e){ if(alive && mine === seq && key === rankScopeKey()) err && err(e); }
         if(alive && mine === seq) timer = setTimeout(pull, G.tab === 'rank' ? 8000 : 30000); // a lighter poll when nobody is looking at the board
       };
@@ -2083,6 +2090,10 @@ async function rankInit(){
     }, err => { RK.status = 'err'; });
     // the endless board is its own query: a top score may belong to someone with a modest sword
     RK.unsub2 = db.collection('scores').orderBy('ed', 'desc').limit(60).onSnapshot(snap => { RK.erows = snap.docs.map(d => cleanRow(d.id, d.data())).filter(r => r && r.es > 0); }, () => {});
+    // 화면 모드 boards: each row read through its 모바일 / PC best
+    const modeRows = k => snap => snap.docs.map(d => { const v = d.data() || {}; return cleanRow(d.id, Object.assign({}, v, { ed: v['ed' + k], es: v['es' + k], et: v['et' + k], ew: v['ew' + k], ev: k, info: '' })); }).filter(r => r && r.es > 0);
+    RK.unsub3 = db.collection('scores').orderBy('edm', 'desc').limit(60).onSnapshot(snap => { RK.erowsM = modeRows('m')(snap); RK.modeErr = false; }, () => { RK.modeErr = true; });
+    RK.unsub4 = db.collection('scores').orderBy('edp', 'desc').limit(60).onSnapshot(snap => { RK.erowsP = modeRows('p')(snap); RK.modeErr = false; }, () => { RK.modeErr = true; });
   }catch(e){ RK.status = 'err'; }
   rankSync();
   if(!S.binfo && S.lv >= S.best && S.bestId === curId()) S.binfo = curInfo();
@@ -2107,7 +2118,8 @@ function cleanRow(id, d){
   const ew = typeof d.ew === 'string' && WEP[d.ew] ? d.ew : '';
   const cx = clamp(Math.floor(+d.cx || 0), 0, WTOTAL());
   const inf = typeof d.info === 'string' ? d.info.split('#') : [];
-  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, cx, bi: infoParse(inf[0]), ei: infoParse(inf[1]), bs: clamp(Math.floor(+inf[2] || 0), 0, 1e12) };
+  const ev = d.ev === 'm' || d.ev === 'p' ? d.ev : '';
+  return { id, name, best, stage, diff, title, wep, es, et, ed, ew, ev, cx, bi: infoParse(inf[0]), ei: infoParse(inf[1]), bs: clamp(Math.floor(+inf[2] || 0), 0, 1e12) };
 }
 // furthest progress: the hardest difficulty with any clear, and the deepest stage cleared there
 function clearedBest(){ for(let i = DORD.length - 1; i >= 0; i--){ let m = 0; const c = PG(DORD[i]).clear; for(const k in c) if(c[k]) m = Math.max(m, +k); if(m) return { d: DORD[i], s: m }; } return { d: 'normal', s: 0 }; }
@@ -2188,13 +2200,15 @@ function rankPush(delay = 1500){ if(TEST_SITE) return;
     if(!RK.db || !RK.uid || RK.writable === false || !S.name) return;
     if(RK.busy){ rankPush(); return; }
     const cb = clearedBest(), eb = S.eb || { s: 0, t: 0, d: 0 }, doc = { name: S.name, title: S.title || '', best: S.best, stage: cb.s, diff: cb.d, sv: 2, wep: wepOf(S.bestId).line, es: eb.s || 0, et: eb.t || 0, ed: eb.d || 0, ew: WEP[eb.w] ? eb.w : '' };
+    if(!RK.noMode){ const em = S.ebm || {}, f = (k, o = {}) => { doc['ed' + k] = o.d || 0; doc['es' + k] = o.s || 0; doc['et' + k] = o.t || 0; doc['ew' + k] = WEP[o.w] ? o.w : ''; }; doc.ev = eb.m || ''; f('m', em.m); f('p', em.p); } /* 화면 모드: the overall best's mode, and the best of each mode */
     if(!RK.noCx) doc.cx = foundCount();
     if(RK.web && !RK.noInfo) doc.info = (S.binfo || '') + '#' + (eb.i || '') + '#' + Math.round(((S.ebs || {})[S.bestSid] || 0)); /* 툴팁: the best sword's and the endless run's slots and enchants */ /* 도감: weapons found, over all weapons */
     const key = JSON.stringify([roomKey(), doc]); if(key === RK.last) return;
     RK.busy = true; let retry = 0;
     try{ await RK.db.doc('scores/' + RK.uid).set(doc); RK.last = key; RK.writable = true; RK.retry = 0; if(RK.web) setTimeout(rankRefresh, 300); }
     catch(e){ if(RK.web && !RK.noInfo && e && e.status === 400 && /info/.test(e.message || '')){ RK.noInfo = true; retry = 1500; }
-      else if(RK.web && !RK.noCx && e && e.status === 400 && /cx/.test(e.message || '')){ RK.noCx = true; retry = 1500; } /* an older board can still save the columns it has */
+      else if(RK.web && !RK.noCx && e && e.status === 400 && /cx/.test(e.message || '')){ RK.noCx = true; retry = 1500; }
+      else if(RK.web && !RK.noMode && e && e.status === 400 && /\b(ev|e[dstw][mp])\b/.test(e.message || '')){ RK.noMode = true; retry = 1500; } /* the 화면 모드 columns are not on the server yet (supabase_mode.sql) */ /* an older board can still save the columns it has */
       else if(e && (e.code === 'invalid_argument' || e.code === 'not_granted' || e.status === 401 || e.status === 403)) RK.writable = false;
       else retry = RK.retry = Math.min(60000, (RK.retry || 2500) * 2); }
     RK.busy = false; if(retry && !RK.timer) rankPush(retry);
@@ -2353,9 +2367,12 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
     if(B.newBest){ S.ebp[size] = { s: B.score, t, d: B.n, w: B.wid, pw }; banner('ach', size + '인 무한 도전 신기록', B.n + '층'); partyPush(size); }
     log('같이 하기 ' + size + '인 ' + B.n + '층'); save(); return;
   }
-  const t = Math.round(B.t), best = S.eb || { s: 0 };
-  B.newBest = B.n > (best.d || 0) || (B.n === (best.d || 0) && B.score > (best.s || 0)); /* the floor counts first; the score only breaks a tie */
-  if(B.newBest){ S.eb = { s: B.score, t, d: B.n, w: B.wid, i: curInfo() }; /* w: the sword used in that run */ banner('ach', '무한 도전 신기록', B.n + '층 · ' + fmt(B.score) + '점'); rankPush(); }
+  const t = Math.round(B.t), best = S.eb || { s: 0 }, md = B.scr === 'm' ? 'm' : 'p', mb = (S.ebm = S.ebm || {})[md] || { s: 0 };
+  const better = o => B.n > (o.d || 0) || (B.n === (o.d || 0) && B.score > (o.s || 0)); /* the floor counts first; the score only breaks a tie */
+  const rec = { s: B.score, t, d: B.n, w: B.wid, i: curInfo(), m: md }; /* w: the sword used in that run, m: 화면 모드 */
+  if(better(mb)){ S.ebm[md] = rec; rankPush(); } // the best for this screen mode (모바일 / PC board)
+  B.newBest = better(best);
+  if(B.newBest){ S.eb = rec; banner('ach', '무한 도전 신기록', B.n + '층 · ' + fmt(B.score) + '점'); rankPush(); }
   log('무한 도전 ' + B.n + '층 · ' + fmt(B.score) + '점'); save();
 }
 // ===================== together (같이 하기): up to 4 friends with the same class code and room number climb one endless run =====================
@@ -2811,7 +2828,7 @@ const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCa
 const svR = () => { const r = br(); return Math.round((r.reach + S.lv * r.reachLv) * bucket(svRangeAdd())); };
 const svFar = (base, lv) => Math.round((base + S.lv * lv) * bucket(svRangeAdd() * br().farK));
 const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
-function svLayout(){ SV.y0 = 46; SV.h = FH / BS - 46; if(viewFixed()){ SV.ww = 1300; SV.wh = 1300; } else { SV.ww = Math.max(900, FW / BS + 160); SV.wh = Math.max(700, FH / BS + 160); } } // fixed view: one square map for every device
+function svLayout(){ SV.y0 = 46; SV.h = FH / BS - 46; SV.ww = 1013; SV.wh = 700; } // one map for every mode and device (같이 하기 shares it); the old PC size
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
 const ST_LEN = [19, 30, 54, 80, 108, 150]; // 지옥 6지역 ≈ 6~8분, the first two areas fly by
 const EARLY = [.65, .82, 1, 1, 1, 1]; // the first areas: softer monsters that hit lighter
@@ -2821,7 +2838,7 @@ function startSurv(s){
   svLayout();
   const diffKey = curDiff();
   const ai = stArea(s), boss = stBoss(s);
-  B = { surv: true, s, ai, boss, time: boss ? 90 : 80, tmax: boss ? 90 : 80, need: boss ? 1 : stNeed(ai, diffKey), pr: 0, kills: 0, gold: 0, shards: 0, mons: [], nums: [], slashes: [], t: 0,
+  B = { surv: true, scr: prefMode(), s, ai, boss, time: boss ? 90 : 80, tmax: boss ? 90 : 80, need: boss ? 1 : stNeed(ai, diffKey), pr: 0, kills: 0, gold: 0, shards: 0, mons: [], nums: [], slashes: [], t: 0,
     combo: 0, comboT: 0, maxCombo: 0, fev: 0, fevT: 0, treasure: 0, breaks: 0, over: null,
     cls: clsOf(), line: lineOf(), wid: curId(), wcol: glowOf(curId(), 0) || '#e8f0ff', fx: wfx(curId()),
     P: { x: SV.ww / 2, y: SV.y0 + SV.wh / 2, hp: 100, max: 100, inv: 0, fx: 1, fy: 0 }, joy: null,
@@ -2894,7 +2911,7 @@ function monAct(m, dt, P, d, dx, dy){ // returns true if it handled movement its
   return false;
 }
 const monNm = k => { for(const a of AREAS){ const j = a.mons.indexOf(k); if(j >= 0) return a.monN[j]; if(a.boss === k) return a.bossN; } return k; };
-const spawnR = () => viewFixed() ? 490 : 285; // monsters appear this far from the player: just past the corner of the battle view
+const spawnR = () => curMode() === 'p' ? 490 : 285; // monsters appear this far from the player: just past the corner of the mode's battle view
 function svSpawn(kind, fk){ // fk: this species, not a random one (split slimes, 테스트룸): name, armour, speed, ai and toughness all follow it
   const A = AREAS[B.ai], r0 = Math.random(), i = r0 < .4 ? 0 : r0 < .75 ? 1 : 2;
   let key = fk || A.mons[i], name = fk ? monNm(fk) : A.monN[i], ms = MST[key] || [30, 1], hpK = 3 * ms[1], spd = ms[0] * 1.15 * (.9 + Math.random() * .2), dmg = 9, xp = 1, gK = .35, fast = false;
@@ -4402,13 +4419,14 @@ function drawRank0(){
       button('rks_set', 198, 384, 68, 18, '코드 바꾸기', null, setRoom, { small: true });
       T(RK.status === 'loading' ? '불러오는 중...' : etab ? '층수 순' : '최고 강화 순', VW - 8, 33, { f: 's', a: 'r', c: COL.dim }); }
     else T(RK.status === 'loading' ? '불러오는 중...' : (RK.writable === false ? '보기 전용' : etab ? '층수 순' : '최고 강화 순'), VW - 8, 33, { f: 's', a: 'r', c: RK.writable === false ? COL.bad : COL.dim });
-    const psz = etab ? (G.rankSize || 1) : 1, fsub = etab ? 'best' : (G.rankSub || 'best');
+    const psz = etab ? (G.rankSize || 1) : 1, fsub = etab ? 'best' : (G.rankSub || 'best'), rmode = etab && psz === 1 ? (G.rankMode || '') : '';
+    if(etab && psz === 1){ R(150, 27, 120, 20, '#140d0a'); [['', '전체', 28], ['m', '모바일', 38], ['p', 'PC', 26]].reduce((x, [k, lb, w]) => { button('rmd' + (k || 'all'), x, 29, w, 16, lb, null, () => { G.rankMode = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: rmode === k ? 'gold' : 'normal' }); return x + w + 2; }, 172); } // 화면 모드: one board for all, or just 모바일 / just PC
     if(!etab && RK.web){ [['best', '계정 최고'], ['cur', '현재 보유'], ['all', '역대 검']].forEach(([k, lb], i) => button('rsb' + k, 4 + i * 88, 48, 86, 15, lb, null, () => { G.rankSub = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: fsub === k ? 'gold' : 'normal' })); }
     if(fsub !== 'best'){ drawSwordBoard(fsub); return; }
     if(etab){ for(let k = 1; k <= MP_MAX; k++){ const on = psz === k, bx = 4 + (k - 1) * 44; button('rsz' + k, bx, 48, 42, 15, k === 1 ? '솔로' : k + '인', null, () => { G.rankSize = k; G.scroll.rank = { y: 0 }; }, { small: true, kind: on ? 'gold' : 'normal' }); } }
     if(psz > 1) partyPull(psz);
     const st = G.scroll.rank, top = etab || RK.web ? 66 : 50, h = etab || RK.web ? 314 : 330, rowH = 36;
-    const rows = !etab ? RK.rows : psz > 1 ? ((RK.pb || {})[psz] || []).slice().sort(enOrder) : (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder);
+    const rows = !etab ? RK.rows : psz > 1 ? ((RK.pb || {})[psz] || []).slice().sort(enOrder) : rmode ? ((rmode === 'm' ? RK.erowsM : RK.erowsP) || []).slice().sort(enOrder) : (RK.erows || RK.rows).filter(r => r.es > 0).sort(enOrder);
     scrollArea(st, 0, top, VW, h, rows.length * rowH + 4);
     g.save(); g.beginPath(); g.rect(0, top, VW, h); g.clip();
     if(!rows.length) T(psz > 1 && RK.noParty ? '파티 랭킹 저장소가 아직 없다 (선생님 설정 필요)' : psz > 1 ? '아직 ' + psz + '인 기록이 없다. 같이 하기로 도전해 보자.' : '아직 아무도 기록을 올리지 않았다.', 135, top + 20, { f: 's', a: 'c', c: COL.faint });
@@ -4431,7 +4449,7 @@ function drawRank0(){
       const wc = glowOf(wid, G.t) || COL.text;
       if(psz > 1 && r.pw){ T('함께: ' + r.pw, 74, y + 19, { f: 's', c: '#8ad8ff' }); T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); return; }
       const ww = T(etab && !wok ? '무기 기록 없음' : '+' + wL + ' ' + (wok && (etab || WEP[wid].L === r.best) ? wName(wid) : r.best > WL.c.to ? '(무기 고르는 중)' : ''), 74, y + 19, { f: 's', c: etab && !wok ? COL.faint : wc });
-      if(etab){ T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); T(fmt(r.es) + '점 · ' + fmtT(r.et), 260, y + 20, { f: 's', a: 'r', c: COL.dim }); return; }
+      if(etab){ T(r.ed + '층', 260, y + 3, { f: 'b', a: 'r', c: COL.gold }); T((r.ev ? (r.ev === 'm' ? '모바일 · ' : 'PC · ') : '') + fmt(r.es) + '점 · ' + fmtT(r.et), 260, y + 20, { f: 's', a: 'r', c: COL.dim }); return; }
       let bw = T('+' + r.best, 260, y + 3, { f: 'b', a: 'r', c: wc });
       if(r.bs){ const bt = '무한 ' + fmtK(r.bs) + '점', bl = 80 + nw + (r.title ? tw(r.title, 's') + 4 : 0); if(bl < 254 - bw - tw(bt, 's')){ T(bt, 254 - bw, y + 5, { f: 's', a: 'r', c: '#ffd27a' }); bw += tw(bt, 's') + 6; } } // that sword's endless score: what breaks a tie
       const sw2 = T(r.stage ? DIFF[r.diff][0] + ' ' + stLabel(r.stage) : '-', 260, y + 20, { f: 's', a: 'r', c: r.stage && r.diff !== 'normal' ? DIFF[r.diff][1] : COL.dim }); // stage, coloured by the difficulty it was reached on
@@ -4446,7 +4464,7 @@ function drawRank0(){
   }
   panel(4, 406, 262, 26, 'slot');
   T('내 기록', 12, 413, { f: 's', c: COL.dim });
-  { const cb = clearedBest(), eb = (etab && (G.rankSize || 1) > 1 ? (S.ebp || {})[G.rankSize] : S.eb) || { s: 0 }; T(etab ? (eb.s ? (WEP[eb.w] ? '+' + WEP[eb.w].L + ' ' + wName(eb.w) + ' · ' : '') + (eb.d || 0) + '층 · ' + fmt(eb.s) + '점' : '아직 도전 기록이 없다') : '최고 +' + S.best + '  ·  최고 스테이지 ' + (cb.s ? DIFF[cb.d][0] + ' ' + stLabel(cb.s) : '-'), 258, 413, { f: 's', a: 'r', c: COL.text }); }
+  { const cb = clearedBest(), eb = (etab && (G.rankSize || 1) > 1 ? (S.ebp || {})[G.rankSize] : etab && G.rankMode ? (S.ebm || {})[G.rankMode] : S.eb) || { s: 0 }; T(etab ? (eb.s ? (WEP[eb.w] ? '+' + WEP[eb.w].L + ' ' + wName(eb.w) + ' · ' : '') + (eb.d || 0) + '층 · ' + fmt(eb.s) + '점' : '아직 도전 기록이 없다') : '최고 +' + S.best + '  ·  최고 스테이지 ' + (cb.s ? DIFF[cb.d][0] + ' ' + stLabel(cb.s) : '-'), 258, 413, { f: 's', a: 'r', c: COL.text }); }
 }
 
 // ---------------- modals ----------------
@@ -4463,7 +4481,7 @@ function drawModal(){
     T(S.vault.length ? '보관함에 검 ' + S.vault.length + '자루가 남아 있다.' : '팁: 아끼는 검은 보관함에 걸어 둘 수 있다.', VW / 2, y + 100, { f: 's', a: 'c', c: S.vault.length ? COL.good : COL.faint });
     button('mok', x + 12, y + 126, 212, 34, '잔해를 줍고 +0부터', '파편과 별조각은 챙긴다', () => destroyChoose(), {});
   } else if(m.k === 'settings'){
-    const { x, y } = mwin(236, 412, '설정');
+    const { x, y } = mwin(236, 442, '설정');
     const row = (i, label, val, fn, kind) => { const yy = y + 46 + i * 30; T(label, x + 14, yy + 5, { c: COL.text }); button('set' + i, x + 136, yy, 86, 22, val, null, fn, { small: true, kind }); };
     row(0, '배경음악', S.opts.bgm ? '켜짐' : '꺼짐', () => { S.opts.bgm = !S.opts.bgm; updateBgmGain(); save(); }, S.opts.bgm ? 'gold' : 'normal');
     row(1, '효과음', S.opts.sfx ? '켜짐' : '꺼짐', () => { S.opts.sfx = !S.opts.sfx; save(); }, S.opts.sfx ? 'gold' : 'normal');
@@ -4472,14 +4490,15 @@ function drawModal(){
     row(4, '그래픽', gfxLabel(), () => gfxNext(), GQ() === 2 ? 'gold' : 'normal');
     row(5, '데미지 숫자', { all: '전부', crit: '치명타만', off: '끄기' }[dmgMode()], () => dmgNext(), dmgMode() === 'all' ? 'gold' : 'normal');
     row(6, '몬스터 테두리', S.opts.noOutline ? '꺼짐' : '켜짐', () => { S.opts.noOutline = !S.opts.noOutline; save(); }, S.opts.noOutline ? 'normal' : 'gold');
-    T(S.opts.fast ? '게이지 없이 바로 두들긴다. 보너스 없음.' : '게이지를 맞추면 성공률이 오른다.', VW / 2, y + 256, { f: 's', a: 'c', c: COL.faint });
-    button('setn', x + 14, y + 276, 100, 24, '이름 바꾸기', null, () => { G.modal = null; openTitle(true); }, { small: true });
-    button('sets', x + 122, y + 276, 100, 24, '내 기록', null, () => { G.modal = { k: 'stats' }; }, { small: true });
-    button('setc', x + 14, y + 306, 100, 24, '만든 사람들', null, () => { G.modal = { k: 'credits' }; }, { small: true });
-    button('setr', x + 122, y + 306, 100, 24, '처음부터', null, () => { G.modal = { k: 'reset' }; }, { small: true, kind: 'danger' });
-    button('setf', x + 14, y + 336, 100, 24, '전체 화면', null, () => toggleFS(), { small: true, kind: 'blue' });
-    button('seth', x + 122, y + 336, 100, 24, '도움말', null, () => { G.modal = { k: 'help' }; G.scroll.help = { y: 0 }; }, { small: true, kind: 'gold' });
-    button('setx', x + 14, y + 370, 208, 30, '닫기', null, () => { G.modal = null; }, { kind: 'primary' });
+    { const inRun = G.scr === 'battle'; row(7, '화면 모드' + (inRun ? ' (전투 중 고정)' : ''), prefMode() === 'm' ? '모바일' : 'PC', () => { if(inRun){ toast('화면 모드는 전투 밖에서 바꿀 수 있다'); return; } S.opts.scr = prefMode() === 'm' ? 'p' : 'm'; save(); }, prefMode() === 'm' ? 'gold' : 'blue'); }
+    T(S.opts.fast ? '게이지 없이 바로 두들긴다. 보너스 없음.' : '게이지를 맞추면 성공률이 오른다.', VW / 2, y + 286, { f: 's', a: 'c', c: COL.faint });
+    button('setn', x + 14, y + 306, 100, 24, '이름 바꾸기', null, () => { G.modal = null; openTitle(true); }, { small: true });
+    button('sets', x + 122, y + 306, 100, 24, '내 기록', null, () => { G.modal = { k: 'stats' }; }, { small: true });
+    button('setc', x + 14, y + 336, 100, 24, '만든 사람들', null, () => { G.modal = { k: 'credits' }; }, { small: true });
+    button('setr', x + 122, y + 336, 100, 24, '처음부터', null, () => { G.modal = { k: 'reset' }; }, { small: true, kind: 'danger' });
+    button('setf', x + 14, y + 366, 100, 24, '전체 화면', null, () => toggleFS(), { small: true, kind: 'blue' });
+    button('seth', x + 122, y + 366, 100, 24, '도움말', null, () => { G.modal = { k: 'help' }; G.scroll.help = { y: 0 }; }, { small: true, kind: 'gold' });
+    button('setx', x + 14, y + 400, 208, 30, '닫기', null, () => { G.modal = null; }, { kind: 'primary' });
   } else if(m.k === 'stats'){
     const { x, y } = mwin(240, 372, '내 기록');
     const st = [['최고 기록', '+' + S.best], ['강화 시도', fmt(S.tries)], ['실제 성공률', (S.tries ? (S.succ / S.tries * 100).toFixed(1) : '0.0') + '%'], ['PERFECT', fmt(S.perfect)], ['부서진 검', fmt(S.destroyed)], ['가호가 막은 파괴', fmt(S.saved)], ['판 검', fmt(S.sold)], ['쓴 골드', fmtK(S.spent)], ['번 골드', fmtK(S.earned)], ['잡은 몬스터', fmt(S.kills)], ['최장 연속 실패', fmt(S.maxFailStreak)]];
@@ -4979,7 +4998,7 @@ function loop(now){
   if(MP.lobby) mpLobbyTick(dt);
   G.shake = REDUCED || S.opts.noShake || !GQ() ? 0 : Math.max(0, G.shake - dt * 18);
   const battle = G.scr === 'battle';
-  { const fk = battle && viewFixed() && !viewPaused() ? 'f' + !!S.opts.viewPort : 'n'; if(fk !== G.fitK){ G.fitK = fk; fit(); } }
+  { let fk = 'n'; if(battle){ const v = battleView(innerWidth, innerHeight); fk = v ? v.join() : 'o'; } if(fk !== G.fitK){ G.fitK = fk; fit(); } }
   VW = battle ? FW / BS : 270; VH = battle ? FH / BS : 480;
   OX = battle ? 0 : Math.floor((FW - 270) / 2); OY = battle ? 0 : Math.floor((FH - 480) / 2);
   UI.regs = [];
@@ -5060,8 +5079,8 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
   function build(){
     P.innerHTML = '';
     P.append(el('div', { className: 'row' }, [el('b', { textContent: '🧪 테스트룸' }), el('span', { className: 'note', textContent: ' 테스트 서버 전용 · 기록 안 올라감' }), bt('닫기', () => { P.style.display = 'none'; })]));
-    P.append(el('div', { className: 'row' }, [bt('전투 화면: ' + (viewFixed() ? '고정 853×480' : '예전 방식'), () => { S.opts.view = viewFixed() ? 'old' : 'fixed'; G.fitK = null; }, viewFixed()), bt('방향: ' + (S.opts.viewPort ? '세로' : '가로'), () => { S.opts.viewPort = !S.opts.viewPort; G.fitK = null; }, !!S.opts.viewPort)]),
-      el('div', { className: 'note', textContent: '고정: 모든 기기가 같은 범위(가로 853×480, 세로 480×853). 예전 방식: 창 크기만큼 넓게. 바로 바뀜.' }));
+    P.append(el('div', { className: 'row' }, [bt('화면 모드: ' + (prefMode() === 'm' ? '📱 모바일' : '💻 PC'), () => { S.opts.scr = prefMode() === 'm' ? 'p' : 'm'; save(); }, prefMode() === 'm')]),
+      el('div', { className: 'note', textContent: '다음 전투부터 적용(설정에서도 바꿈). 모바일 270×480(눕히면 480×270), PC 853×480.' }));
     P.append(el('div', { className: 'row' }, [bt('테스트룸 입장', enter)]), el('div', { className: 'note', textContent: '몬스터 없이 시작, 스테이지가 저절로 넘어가지 않음, 가운데에 체력 무한 허수아비 하나. 몬스터는 아래 「전투 중」에서 직접 소환.' }));
     // ---- 무기·직업
     P.append(el('h3', { textContent: '무기 · 직업 (지금: +' + S.lv + ' ' + wName(curId()) + ' · ' + WL[lineOf()].n + ')' }));

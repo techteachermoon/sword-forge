@@ -22,6 +22,11 @@ body.max{padding:0}body.max #screen,:fullscreen #screen{box-shadow:none}
 // FW×FH is the whole canvas (fills the window). VW×VH is the box the current screen draws into:
 // the battle uses the whole canvas, every other screen is the 270×480 layout centred at (OX, OY).
 let FW = 270, FH = 480, VW = 270, VH = 480, OX = 0, OY = 0;
+// 전투 화면 고정 (test): every device sees the same 640×360 battle (세로 옵션: 360×640). S.opts.view === 'old' brings back the fit-to-window battle
+const VIEW_FIX = [640, 360];
+let VROT = false, US = 1, BS = 1; // VROT: the landscape battle on an upright phone is drawn turned 90°; US: scale of a shrunk 270×480 layout (hit boxes follow it); BS: canvas pixels per game pixel in the battle (2 for the landscape view, so shrunk windows keep readable letters)
+const viewPaused = () => !!G.modal || !!(B && (B.pick || B.paused || B.over)); // windows (cards, pause, result) are laid out for 270×480: while one is up the battle is drawn the old way
+const viewFixed = () => typeof S === 'object' && !!S && !!S.opts && (TEST_SITE ? S.opts.view !== 'old' : S.opts.view === 'fixed'); // test server: on unless switched back
 const cv = document.getElementById('screen');
 const sx = cv.getContext('2d');
 const lc = document.createElement('canvas'); lc.width = VW; lc.height = VH;
@@ -35,8 +40,9 @@ const GQ = () => { const o = typeof S !== 'undefined' && S && S.opts; if(!o) ret
 
 function fit(){
   const aw = Math.max(200, document.documentElement.clientWidth || innerWidth), ah = Math.max(300, innerHeight || 600);
-  let s;
-  if(aw / ah >= 270 / 480){ s = ah / 480; FH = 480; FW = Math.round(aw / s); }
+  let s, fixed = false; try{ fixed = G.scr === 'battle' && viewFixed() && !viewPaused(); }catch(_){} VROT = false; BS = 1; // (early resizes run before G exists)
+  if(fixed){ const port = !!S.opts.viewPort; FW = port ? VIEW_FIX[1] : VIEW_FIX[0]; FH = port ? VIEW_FIX[0] : VIEW_FIX[1]; VROT = !port && ah > aw; s = VROT ? Math.min(ah / FW, aw / FH) : Math.min(aw / FW, ah / FH); }
+  else if(aw / ah >= 270 / 480){ s = ah / 480; FH = 480; FW = Math.round(aw / s); }
   else { s = aw / 270; FW = 270; FH = Math.round(ah / s); }
   SCALE = s;
   lc.width = FW; lc.height = FH; g.imageSmoothingEnabled = false;
@@ -46,8 +52,9 @@ function fit(){
   // the browser stretches the canvas the rest of the way. Nearest-neighbour only when that stretch is (nearly) whole pixels;
   // at an odd stretch like ×2.2 it made 1-pixel strokes alternate 2 and 3 pixels wide and Hangul looked broken
   { const f = s * dpr / KX, fr = f - Math.floor(f); cv.style.imageRendering = f >= 1 && (fr < .02 || fr > .98) ? 'pixelated' : 'auto'; } /* an uneven stretch (×1.09) doubled every 11th row and big letters looked broken */
-  cv.style.width = aw + 'px';
-  cv.style.height = ah + 'px';
+  cv.style.width = (fixed ? FW * s : aw) + 'px';
+  cv.style.height = (fixed ? FH * s : ah) + 'px';
+  cv.style.transform = VROT ? 'rotate(90deg)' : '';
   sx.imageSmoothingEnabled = false;
   if(typeof placeInput === 'function') placeInput();
 }
@@ -232,18 +239,19 @@ function wrap(str, f, maxW){
 
 // ---- input / immediate-mode UI ----
 const UI = { regs: [], last: [], px: -99, py: -99, down: false, downId: null, downReg: null, sx: 0, sy: 0, drag: false, scroll: null, scroll0: 0, kb: [] };
-function hit(id, x, y, w, h, fn, extra){ UI.regs.push(Object.assign({ id, x: x + OX, y: y + OY, w, h, fn }, extra || {})); }
-function scrollArea(st, x, y, w, h, contentH){ st.max = Math.max(0, contentH - h); st.y = clamp(st.y, 0, st.max); UI.regs.push({ id: '__scroll', x: x + OX, y: y + OY, w, h, scroll: st }); }
-function centered(fn){ // draw a 270×480 layout in the middle of a full-canvas screen
-  const sv = [VW, VH, OX, OY]; OX = Math.floor((FW - 270) / 2); OY = Math.floor((FH - 480) / 2); VW = 270; VH = 480;
-  g.save(); g.translate(OX - sv[2], OY - sv[3]); try{ fn(); } finally { g.restore(); [VW, VH, OX, OY] = sv; }
+function hit(id, x, y, w, h, fn, extra){ UI.regs.push(Object.assign({ id, x: x * US + OX, y: y * US + OY, w: w * US, h: h * US, fn }, extra || {})); }
+function scrollArea(st, x, y, w, h, contentH){ st.max = Math.max(0, contentH - h); st.y = clamp(st.y, 0, st.max); UI.regs.push({ id: '__scroll', x: x * US + OX, y: y * US + OY, w: w * US, h: h * US, scroll: st }); }
+function centered(fn){ // draw a 270×480 layout in the middle of a full-canvas screen (shrunk to fit a 640×360 battle)
+  const sv = [VW, VH, OX, OY, US], k = Math.min(1, VW / 270, VH / 480), lx = Math.floor((VW - 270 * k) / 2), ly = Math.floor((VH - 480 * k) / 2);
+  OX = sv[2] + lx * sv[4]; OY = sv[3] + ly * sv[4]; VW = 270; VH = 480; US = sv[4] * k;
+  g.save(); g.translate(lx, ly); if(k < 1) g.scale(k, k); try{ fn(); } finally { g.restore(); [VW, VH, OX, OY, US] = sv; }
 }
 function inside(r, x, y){ return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h; }
 function pressedOn(id){ return UI.down && !UI.drag && UI.downId === id && UI.downReg && inside(UI.downReg, UI.px, UI.py); }
 function hovering(id){ const r = topAt(UI.px, UI.py); return r && r.id === id; }
 function topAt(x, y){ for(let i = UI.last.length - 1; i >= 0; i--){ const r = UI.last[i]; if(r.id !== '__scroll' && inside(r, x, y)) return r; } return null; }
 function scrollAt(x, y){ for(let i = UI.last.length - 1; i >= 0; i--){ const r = UI.last[i]; if(r.block && inside(r, x, y)) return null; if(r.scroll && inside(r, x, y)) return r.scroll; } return null; }
-function toLogical(e){ const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / b.width * FW, (e.clientY - b.top) / b.height * FH]; }
+function toLogical(e){ const b = cv.getBoundingClientRect(); if(VROT){ const dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2); return [(dy / SCALE + FW / 2) / BS, (-dx / SCALE + FH / 2) / BS]; } return [(e.clientX - b.left) / b.width * FW / BS, (e.clientY - b.top) / b.height * FH / BS]; }
 // multi-touch: the first finger owns the UI (joystick, scrolling, normal buttons). Any extra finger never disturbs it:
 // on a button it presses that button at once, on the battlefield it dashes. So steering with one thumb and tapping
 // 구르기 with the other keeps you moving.
@@ -2357,7 +2365,7 @@ function enRecord(){ // once per run: keep the best score (and its time and floo
    already have (ep: a counter that goes up with every new host, so a host that comes back from a hidden tab steps aside).
    No gold in this mode; monsters get tougher with each friend in the room. */
 const MP = { on: false, ch: null, cli: null, peers: {}, sendT: 0, me: null, remote: false, host: false, ep: 0, t0: 0, joinT: 0, lastW: -9, hits: [], hurts: [], killed: new Map(), party: 1 };
-const MP_VER = 17; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
+const MP_VER = 18; // bump when the together protocol changes: an old open tab would silently miss things (chat, …)
 const MP_MAX = 6, MP_DT = .1, MP_KIND = ['normal', 'elite', 'gold', 'boss'];
 const mpAvail = () => !window.claude && !!(SB.url && SB.key);
 function mpLoadLib(){
@@ -2803,7 +2811,7 @@ const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCa
 const svR = () => { const r = br(); return Math.round((r.reach + S.lv * r.reachLv) * bucket(svRangeAdd())); };
 const svFar = (base, lv) => Math.round((base + S.lv * lv) * bucket(svRangeAdd() * br().farK + (TST ? TST.far : 0)));
 const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
-function svLayout(){ SV.y0 = 46; SV.h = FH - 46; SV.ww = Math.max(900, FW + 160); SV.wh = Math.max(700, FH + 160); }
+function svLayout(){ SV.y0 = 46; SV.h = FH / BS - 46; if(viewFixed()){ SV.ww = 1000; SV.wh = 1000; } else { SV.ww = Math.max(900, FW / BS + 160); SV.wh = Math.max(700, FH / BS + 160); } } // fixed view: one square map for every device
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
 const ST_LEN = [19, 30, 54, 80, 108, 150]; // 지옥 6지역 ≈ 6~8분, the first two areas fly by
 const EARLY = [.65, .82, 1, 1, 1, 1]; // the first areas: softer monsters that hit lighter
@@ -2886,7 +2894,7 @@ function monAct(m, dt, P, d, dx, dy){ // returns true if it handled movement its
   return false;
 }
 const monNm = k => { for(const a of AREAS){ const j = a.mons.indexOf(k); if(j >= 0) return a.monN[j]; if(a.boss === k) return a.bossN; } return k; };
-const SPAWN_R = 285; // monsters appear this far from the player
+const spawnR = () => viewFixed() ? 370 : 285; // monsters appear this far from the player: just past the corner of the battle view
 function svSpawn(kind, fk){ // fk: this species, not a random one (split slimes, 테스트룸): name, armour, speed, ai and toughness all follow it
   const A = AREAS[B.ai], r0 = Math.random(), i = r0 < .4 ? 0 : r0 < .75 ? 1 : 2;
   let key = fk || A.mons[i], name = fk ? monNm(fk) : A.monN[i], ms = MST[key] || [30, 1], hpK = 3 * ms[1], spd = ms[0] * 1.15 * (.9 + Math.random() * .2), dmg = 9, xp = 1, gK = .35, fast = false;
@@ -2898,7 +2906,7 @@ function svSpawn(kind, fk){ // fk: this species, not a random one (split slimes,
   const AN = B.mp ? mpAnchor() : null, P = AN || B.P;
   // on a ring around the player, the same distance on every screen (just past the corner of a 480×270 view), kept inside the map
   const ok = (x, y) => x >= 30 && x <= SV.ww - 30 && y >= SV.y0 + 30 && y <= SV.y0 + SV.wh - 30;
-  let x = P.x, y = P.y; for(let t = 0; t < 12; t++){ const a = Math.random() * Math.PI * 2; x = P.x + Math.cos(a) * SPAWN_R; y = P.y + Math.sin(a) * SPAWN_R; if(ok(x, y)) break; }
+  let x = P.x, y = P.y; for(let t = 0; t < 12; t++){ const a = Math.random() * Math.PI * 2; x = P.x + Math.cos(a) * spawnR(); y = P.y + Math.sin(a) * spawnR(); if(ok(x, y)) break; }
   x = clamp(x, 30, SV.ww - 30); y = clamp(y, SV.y0 + 30, SV.y0 + SV.wh - 30);
   // deeper hurts more, and a sword below the stage's recommended level hurts a lot more: that is what sends you back to the forge
   const under = Math.max(0, stRec(B.s) - S.lv);
@@ -4971,11 +4979,12 @@ function loop(now){
   if(MP.lobby) mpLobbyTick(dt);
   G.shake = REDUCED || S.opts.noShake || !GQ() ? 0 : Math.max(0, G.shake - dt * 18);
   const battle = G.scr === 'battle';
-  VW = battle ? FW : 270; VH = battle ? FH : 480;
+  { const fk = battle && viewFixed() && !viewPaused() ? 'f' + !!S.opts.viewPort : 'n'; if(fk !== G.fitK){ G.fitK = fk; fit(); } }
+  VW = battle ? FW / BS : 270; VH = battle ? FH / BS : 480;
   OX = battle ? 0 : Math.floor((FW - 270) / 2); OY = battle ? 0 : Math.floor((FH - 480) / 2);
   UI.regs = [];
   g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1;
-  R(0, 0, FW, FH, '#0c0807');
+  R(0, 0, FW, FH, '#0c0807'); US = 1; if(battle && BS > 1) g.scale(BS, BS);
   if(!battle){ drawBackdrop(); g.translate(OX, OY); }
   if(G.scr === 'title') drawTitle(dt);
   else if(G.scr === 'battle'){ battleUpdate(dt); if(B) drawBattle(dt); drawHUD(); }
@@ -4991,7 +5000,7 @@ function loop(now){
     drawHUD(); drawNav();
     if(G.tab === 'forge' && F.st === 'idle' && !G.modal && DLG.shown >= DLG.cur.length && !DLG.q.length){ G.idleT -= dt; if(G.idleT <= 0) say(pick(LINES.idle)); }
   }
-  drawModal(); drawOverlays(dt);
+  if(battle && VH < 480) centered(drawModal); else drawModal(); drawOverlays(dt);
   UI.last = UI.regs;
   present();
   saveT += dt; if(saveT > 1.5){ saveT = 0; flush(); }
@@ -5051,6 +5060,8 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
   function build(){
     P.innerHTML = '';
     P.append(el('div', { className: 'row' }, [el('b', { textContent: '🧪 테스트룸' }), el('span', { className: 'note', textContent: ' 테스트 서버 전용 · 기록 안 올라감' }), bt('닫기', () => { P.style.display = 'none'; })]));
+    P.append(el('div', { className: 'row' }, [bt('전투 화면: ' + (viewFixed() ? '고정 640×360' : '예전 방식'), () => { S.opts.view = viewFixed() ? 'old' : 'fixed'; G.fitK = null; }, viewFixed()), bt('방향: ' + (S.opts.viewPort ? '세로' : '가로'), () => { S.opts.viewPort = !S.opts.viewPort; G.fitK = null; }, !!S.opts.viewPort)]),
+      el('div', { className: 'note', textContent: '고정: 모든 기기가 같은 범위(가로 640×360, 세로 360×640). 예전 방식: 창 크기만큼 넓게. 바로 바뀜.' }));
     P.append(el('div', { className: 'row' }, [bt('테스트룸 입장', enter)]), el('div', { className: 'note', textContent: '몬스터 없이 시작, 스테이지가 저절로 넘어가지 않음, 가운데에 체력 무한 허수아비 하나. 몬스터는 아래 「전투 중」에서 직접 소환.' }));
     // ---- 무기·직업
     P.append(el('h3', { textContent: '무기 · 직업 (지금: +' + S.lv + ' ' + wName(curId()) + ' · ' + WL[lineOf()].n + ')' }));

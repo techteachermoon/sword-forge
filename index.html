@@ -4538,7 +4538,7 @@ function drawModal(){
     row(4, '그래픽', gfxLabel(), () => gfxNext(), GQ() === 2 ? 'gold' : 'normal');
     row(5, '데미지 숫자', { all: '전부', crit: '치명타만', off: '끄기' }[dmgMode()], () => dmgNext(), dmgMode() === 'all' ? 'gold' : 'normal');
     row(6, '몬스터 테두리', S.opts.noOutline ? '꺼짐' : '켜짐', () => { S.opts.noOutline = !S.opts.noOutline; save(); }, S.opts.noOutline ? 'normal' : 'gold');
-    { const inRun = G.scr === 'battle'; row(7, '화면 모드' + (inRun ? ' (전투 중 고정)' : ''), prefMode() === 'm' ? '모바일' : 'PC', () => { if(inRun){ toast('화면 모드는 전투 밖에서 바꿀 수 있다'); return; } S.opts.scr = prefMode() === 'm' ? 'p' : 'm'; save(); }, prefMode() === 'm' ? 'gold' : 'blue'); }
+    { const inRun = G.scr === 'battle'; row(7, '화면 모드', (prefMode() === 'm' ? '모바일' : 'PC') + (inRun ? ' · 고정' : ''), () => { if(inRun){ toast('화면 모드는 전투 밖에서 바꿀 수 있다'); return; } S.opts.scr = prefMode() === 'm' ? 'p' : 'm'; save(); }, prefMode() === 'm' ? 'gold' : 'blue'); }
     T(S.opts.fast ? '게이지 없이 바로 두들긴다. 보너스 없음.' : '게이지를 맞추면 성공률이 오른다.', VW / 2, y + 286, { f: 's', a: 'c', c: COL.faint });
     button('setn', x + 14, y + 306, 100, 24, '이름 바꾸기', null, () => { G.modal = null; openTitle(true); }, { small: true });
     button('sets', x + 122, y + 306, 100, 24, '내 기록', null, () => { G.modal = { k: 'stats' }; }, { small: true });

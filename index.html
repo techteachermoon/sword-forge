@@ -2801,7 +2801,7 @@ const hitSfx = () => { if(B.t - (B.sfxT ?? -1) >= .05){ B.sfxT = B.t; SFX.hit();
 // 범위 +% (one stat): hit size takes it whole, ranged reach (casting / throwing distance) takes it × farK
 const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0) + (r.stormReach && tr('g_storm') ? .25 : 0) + (TST ? TST.reach : 0); };
 const svR = () => { const r = br(); return Math.round((r.reach + Math.min(S.lv, 30) * r.reachLv) * bucket(svRangeAdd())); };
-const svFar = (base, lv) => Math.round((base + Math.min(S.lv, 30) * lv) * bucket(svRangeAdd() * br().farK));
+const svFar = (base, lv) => Math.round((base + Math.min(S.lv, 30) * lv) * bucket(svRangeAdd() * br().farK + (TST ? TST.far : 0)));
 const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
 function svLayout(){ SV.y0 = 46; SV.h = FH - 46; SV.ww = Math.max(900, FW + 160); SV.wh = Math.max(700, FH + 160); }
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
@@ -5037,7 +5037,7 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
   const sel = (opts, v) => { const s = el('select'); opts.forEach(([k, t]) => s.append(el('option', { value: k, textContent: t, selected: k === v }))); return s; };
   const num = (v, min, max) => el('input', { type: 'number', value: v, min, max, style: 'width:64px' });
   const inBattle = () => G.scr === 'battle' && B && B.surv && !B.over;
-  const tstDef = () => ({ dmg: 0, taken: 0, more: 1, aspd: 0, crit: 0, critd: 0, reach: 0 }); TST = tstDef();
+  const tstDef = () => ({ dmg: 0, taken: 0, more: 1, aspd: 0, crit: 0, critd: 0, reach: 0, far: 0 }); TST = tstDef();
   // a monster, or a dummy that never moves, hits or dies (d.at: [x, y] for a single one)
   const spawn = (key, kind, n, dummy) => { for(let i = 0; i < n; i++){ svSpawn(kind, key); const m = B.mons[B.mons.length - 1]; if(!m) continue;
     if(dummy){ const d = dummy === true ? {} : dummy; m.name = '허수아비'; m.hp = m.max = d.hp || 1e13; m.inf = !d.hp; m.spd = 0; m.dmg = 0; m.ai = 'none'; m.fast = false; m.dummy = 1; m.def = d.def != null ? d.def : 0; m.mdef = d.mdef != null ? d.mdef : 0;
@@ -5090,7 +5090,7 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
       // stats typed in directly, added on top of cards and enchants
       P.append(el('h3', { textContent: '스탯 직접 조절 (카드·인챈트 위에 더해짐)' }));
       const sg = el('div', { className: 'grid' });
-      [['dmg', '피해 증가 +%', 100], ['taken', '받는 피해 증가 +%', 100], ['more', '최종 피해 ×', 1], ['aspd', '공속 +%', 100], ['crit', '치명 확률 +%', 100], ['critd', '치명 피해 +% (×2 기준)', 100], ['reach', '범위 +%', 100]].forEach(([k, t, f]) => {
+      [['dmg', '피해 증가 +%', 100], ['taken', '받는 피해 증가 +%', 100], ['more', '최종 피해 ×', 1], ['aspd', '공속 +%', 100], ['crit', '치명 확률 +%', 100], ['critd', '치명 피해 +% (×2 기준)', 100], ['reach', '범위 +% (원거리 거리는 ×0.3)', 100], ['far', '사거리 +% (원거리 거리에 그대로)', 100]].forEach(([k, t, f]) => {
         const i = el('input', { type: 'number', value: +(TST[k] * f).toFixed(3), step: f === 1 ? .1 : 10, style: 'width:64px' });
         i.onchange = () => { TST[k] = (+i.value || 0) / f; if(k === 'more' && !(TST[k] > 0)) TST[k] = 1; build(); }; sg.append(el('span', { textContent: t }), i); });
       P.append(sg, el('div', { className: 'row' }, [bt('스탯 초기화', () => { TST = tstDef(); })]),

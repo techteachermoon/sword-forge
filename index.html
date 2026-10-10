@@ -1552,17 +1552,17 @@ const ATTACK_INFO = { swing: 'common', spin: 'great', stab: 'twin', throw: 'thro
 // combat rules inherit along the class tree; cards combine, elements merge, other values override (null removes an ability)
 const CLASS_RULES = {
   c: { atk: [1, 1], attack: 'swing', hp: 0, speed: 1, crit: 0, taken: 1, knockback: true, fever: 1, finisher: 'phys',
-       cd: .72, reach: 34, reachLv: .5, reachCard: null, stormReach: true, spin: false, swingTime: .16, hit: 3, hitKb: 10, hitExec: false, hitSrc: '베기 (기본)',
+       cd: .72, reach: 34, reachLv: .5, farK: .3, reachCard: null, stormReach: true, spin: false, swingTime: .16, hit: 3, hitKb: 10, hitExec: false, hitSrc: '베기 (기본)',
        dashMax: 2, dashCd: .85, dashCdMul: 1, dash: 'roll', dashSpeed: 430, dashTime: .15, dashInv: .35, dashCrit: 0, cards: [] },
   g: { atk: [1, .4], hp: 90, speed: .95, taken: .7, knockback: false, cd: 1.05, reach: 40, spin: true, swingTime: .3, hit: 6, hitKb: 26, hitSrc: '대검 회전 베기 (기본)', dashCd: .85 + .25, cards: ['quake', 'spikes'] },
   t: { atk: [1, .4], attack: 'stab', hp: -20, speed: 1.12, crit: TWIN_CRIT, cd: .26, reachLv: .4, reachCard: ['shadow', .15], stormReach: false,
        swingTime: .1, hit: 1.8, hitKb: 4, hitExec: true, hitSrc: '쌍단도 베기 (기본)', dashMax: 3, dashCrit: .6 + .17 },
   m: { atk: [.4, 1], attack: 'cast', hp: -10, fever: 1.3, finisher: 'magic', cd: .9, reach: 37, reachLv: .4, reachCard: ['nova', .25], stormReach: false,
-       dash: 'blink', dashInv: .45, blinkRange: 2, castRange: 170, castHit: 4.3, castKb: 12, nova: true, cards: ['nova'] },
+       dash: 'blink', dashInv: .45, blinkRange: 2, castRange: 100, castLv: 2, castHit: 4.3, castKb: 12, nova: true, cards: ['nova'] },
   g1: { atk: [1, .3], rage: 1, killHeal: [1, 15], cards: ['rage', 'blood'] },
   g2: { atk: [1, .7], hp: 110, shield: 8, cards: ['aura', 'smite'] },
   t1: { atk: [1, .3], dashCdMul: .7, execute: [.3, .08], dashSlash: [2, 6], cards: ['shadow', 'vital'] },
-  t2: { atk: [1, .5], attack: 'throw', cd: .42, dashMax: 4, throwCount: 2, throwRange: 240, throwSpeed: 260, throwTime: .9, throwHit: 1.3,
+  t2: { atk: [1, .5], attack: 'throw', cd: .42, dashMax: 4, throwCount: 2, throwRange: 100, throwLv: 3, throwSpeed: 260, throwTime: .9, throwHit: 1.3,
         volley: { hits: 10, count: 12, speed: 240, time: .8, hit: 1.2 }, cards: ['fan', 'pierce', 'volley'] },
   m1: { atk: [.4, 1.1], elements: { fire: 1 }, fireField: { range: .9, time: 2.5, tick: .5, hit: .35 }, cards: ['sea'] },
   m2: { atk: [.4, 1.1], chain: { stun: .3, hit: .85, count: 3 }, cards: ['arc', 'overload'] },
@@ -1583,14 +1583,14 @@ function validateClassRules(){
   for(const l of Object.keys(CLASS_RULES)) if(!WL[l]) errors.push(l + ': unknown class');
   for(const l of Object.keys(WL)){
     const r = classRules(l, true); if(!ATTACKS[r.attack]) errors.push(l + ': unknown attack ' + r.attack);
-    for(const k of ['hp', 'speed', 'crit', 'taken', 'fever', 'cd', 'reach', 'reachLv', 'swingTime', 'hit', 'hitKb', 'dashMax', 'dashCd', 'dashCdMul', 'dashSpeed', 'dashTime', 'dashInv', 'dashCrit']) finite(l, k, r[k]);
+    for(const k of ['hp', 'speed', 'crit', 'taken', 'fever', 'cd', 'reach', 'reachLv', 'farK', 'swingTime', 'hit', 'hitKb', 'dashMax', 'dashCd', 'dashCdMul', 'dashSpeed', 'dashTime', 'dashInv', 'dashCrit']) finite(l, k, r[k]);
     for(let i = 0; i < 2; i++) finite(l, 'atk[' + i + ']', r.atk && r.atk[i]);
     if(!['roll', 'blink'].includes(r.dash)) errors.push(l + ': unknown dash ' + r.dash);
     if(!['phys', 'magic', 'true'].includes(r.finisher)) errors.push(l + ': unknown finisher ' + r.finisher);
     if(!(r.cd > 0 && r.speed > 0 && r.dashCd > 0 && r.dashCdMul > 0 && r.dashMax >= 1 && Number.isInteger(r.dashMax))) errors.push(l + ': invalid speed or dodge');
     for(const k of r.cards) if(!SVC[k]) errors.push(l + ': unknown card ' + k);
     for(const k of Object.keys(r.elements)){ if(!ELK.includes(k)) errors.push(l + ': unknown element ' + k); finite(l, 'elements.' + k, r.elements[k]); }
-    const extra = r.attack === 'throw' ? ['throwCount', 'throwRange', 'throwSpeed', 'throwTime', 'throwHit'] : r.attack === 'cast' ? ['castRange', 'castHit', 'castKb'] : [];
+    const extra = r.attack === 'throw' ? ['throwCount', 'throwRange', 'throwLv', 'throwSpeed', 'throwTime', 'throwHit'] : r.attack === 'cast' ? ['castRange', 'castLv', 'castHit', 'castKb'] : [];
     if(r.dash === 'blink') extra.push('blinkRange', 'castHit', 'castKb');
     for(const k of new Set(extra)){ finite(l, k, r[k]); if(r[k] < 0 || r[k] === 0 && !['throwHit', 'castHit', 'castKb'].includes(k)) errors.push(l + ': invalid ' + k); }
     for(const [key, fields] of [['volley', ['hits', 'count', 'speed', 'time', 'hit']], ['fireField', ['range', 'time', 'tick', 'hit']], ['chain', ['stun', 'hit', 'count']]]) if(r[key] != null) for(const f of fields) finite(l, key + '.' + f, r[key][f]);
@@ -2798,7 +2798,11 @@ const svAspd = () => { const r = br(); return sk('haste') * .12 + (sk('rage') &&
 const svCd = () => br().cd / bucket(svAspd()); // no cap
 const svMotion = t => Math.min(t, br().cd * .9) / bucket(svAspd()); // the swing speeds up with attack speed and always ends inside the interval
 const hitSfx = () => { if(B.t - (B.sfxT ?? -1) >= .05){ B.sfxT = B.t; SFX.hit(); } }; // very fast attacks: one swish per 0.05s
-const svR = () => { const r = br(); return Math.round((r.reach * (1 + sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0) + (TST ? TST.reach : 0)) + Math.min(S.lv, 30) * r.reachLv) * (r.stormReach && tr('g_storm') ? 1.25 : 1)); };
+// 범위 +% (one stat): hit size takes it whole, ranged reach (casting / throwing distance) takes it × farK
+const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0) + (r.stormReach && tr('g_storm') ? .25 : 0) + (TST ? TST.reach : 0); };
+const svR = () => { const r = br(); return Math.round((r.reach + Math.min(S.lv, 30) * r.reachLv) * bucket(svRangeAdd())); };
+const svFar = (base, lv) => Math.round((base + Math.min(S.lv, 30) * lv) * bucket(svRangeAdd() * br().farK));
+const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
 function svLayout(){ SV.y0 = 46; SV.h = FH - 46; SV.ww = Math.max(900, FW + 160); SV.wh = Math.max(700, FH + 160); }
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
 const ST_LEN = [19, 30, 54, 80, 108, 150]; // 지옥 6지역 ≈ 6~8분, the first two areas fly by
@@ -3111,14 +3115,14 @@ function svVolley(){ // 비도술사: a ring of knives
   for(let i = 0; i < n; i++){ const a = i / n * Math.PI * 2 + Math.random() * .1; B.shots.push({ src: '칼날 비', x: P.x, y: P.y - 2, vx: Math.cos(a) * v.speed, vy: Math.sin(a) * v.speed, life: v.time, a, pierce: 1 + sk('pierce'), hit: new Set(), dag: true, dmg: v.hit, rain: true }); }
 }
 function svThrow(){ // twin blades: knives at the nearest monsters
-  const P = B.P, r = br(), n = r.throwCount + sk('twice') + sk('fan') + (tr('t2_storm') ? 1 : 0), tg = svNear(n, r.throwRange);
+  const P = B.P, r = br(), n = r.throwCount + sk('twice') + sk('fan') + (tr('t2_storm') ? 1 : 0), far = svFar(r.throwRange, r.throwLv), tg = svNear(n, far);
   if(!tg.length) return false;
-  for(let i = 0; i < n; i++){ const m = tg[i % tg.length], a = Math.atan2(m.y - P.y, m.x - P.x) + (i >= tg.length ? (Math.random() - .5) * .5 : 0); B.shots.push({ src: '단검 던지기 (기본)', basic: true, x: P.x, y: P.y - 2, vx: Math.cos(a) * r.throwSpeed, vy: Math.sin(a) * r.throwSpeed, life: r.throwTime, a, pierce: 1 + sk('pierce') + (tr('t2_storm') ? 1 : 0), hit: new Set(), dag: true, dmg: r.throwHit }); }
+  for(let i = 0; i < n; i++){ const m = tg[i % tg.length], a = Math.atan2(m.y - P.y, m.x - P.x) + (i >= tg.length ? (Math.random() - .5) * .5 : 0); B.shots.push({ src: '단검 던지기 (기본)', basic: true, x: P.x, y: P.y - 2, vx: Math.cos(a) * r.throwSpeed, vy: Math.sin(a) * r.throwSpeed, life: Math.max(r.throwTime, far / r.throwSpeed + .15), a, pierce: 1 + sk('pierce') + (tr('t2_storm') ? 1 : 0), hit: new Set(), dag: true, dmg: r.throwHit }); }
   SFX.blip();
   B.swN++; svWave(Math.atan2(tg[0].y - P.y, tg[0].x - P.x));
 }
 function svCast(){ // magic sword: a blast on the nearest monster
-  const P = B.P, range = br().castRange, near = svNear(12, range); if(!near.length) return false;
+  const P = B.P, range = svFar(br().castRange, br().castLv), near = svNear(12, range); if(!near.length) return false;
   const r0 = svR(); let tg = near[0], best = 0; // aim at the thickest knot of monsters
   for(const c of near){ const n = near.filter(o => Math.hypot(o.x - c.x, o.y - c.y) < r0).length; if(n > best){ best = n; tg = c; } }
   if(bossTgt(range)) tg = bossTgt(range);
@@ -3685,7 +3689,7 @@ function survPauseDraw(){ // pause menu: the weapon, its enchants, elements and 
   rows.push({ h: 40, d: y => { const s = swordFrame(id, G.t); R(10, y, 250, 36, '#0e0906'); drawSword(id, Math.round(135 - s.W / 2), y + 18 - s.cy, G.t, { still: 1 }); } });
   line('+' + S.lv + ' ' + w.name + (w.line !== 'c' ? ' · ' + W.n : ''), '물공 ' + fmt(pAtk(S.lv, B.line)) + ' · 마공 ' + fmt(mAtk(S.lv, B.line)) + ' · ' + ci[0] + '. ' + ci[1], w.line !== 'c' ? W.col : COL.text);
   { const cr = Math.min(1, critChance()), cx = critMul();
-    line('전투 수치', '피해 ×' + svDmgMul().toFixed(2) + ' · 치명타 ' + Math.round(cr * 100) + '% (×' + cx.toFixed(1) + ') · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 범위 ' + svR() + (B.endless ? ' · 특성 ' + ENT[B.tr][0] : ''), '#ffe070'); }
+    line('전투 수치', '피해 ×' + svDmgMul().toFixed(2) + ' · 치명타 ' + Math.round(cr * 100) + '% (×' + cx.toFixed(1) + ') · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 범위 ' + svR() + (svFarNow() ? ' · 사거리 ' + svFarNow() : '') + (B.endless ? ' · 특성 ' + ENT[B.tr][0] : ''), '#ffe070'); }
   traitsOf(w.line).forEach(t => { const [a, b] = t.split(': '); line(a, b || '', W.col); });
   if(classDepth(w.line) > 1) line('직업 능력', W.d, W.col);
   line('칼날 속성 · ' + FXE[fx][0], FXE[fx][1], '#8ad8ff');
@@ -5090,7 +5094,7 @@ function testRoom(){ if(document.getElementById('trBtn')) return;
         const i = el('input', { type: 'number', value: +(TST[k] * f).toFixed(3), step: f === 1 ? .1 : 10, style: 'width:64px' });
         i.onchange = () => { TST[k] = (+i.value || 0) / f; if(k === 'more' && !(TST[k] > 0)) TST[k] = 1; build(); }; sg.append(el('span', { textContent: t }), i); });
       P.append(sg, el('div', { className: 'row' }, [bt('스탯 초기화', () => { TST = tstDef(); })]),
-        el('div', { className: 'note', textContent: '지금: 피해 ×' + svDmgMul().toFixed(2) + ' · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 치명 ' + Math.round(Math.min(1, critChance()) * 100) + '% ×' + critMul().toFixed(1) + ' · 범위 ' + svR() + ' · 음수도 됨(약화)' }));
+        el('div', { className: 'note', textContent: '지금: 피해 ×' + svDmgMul().toFixed(2) + ' · 공속 +' + Math.round(svAspd() * 100) + '% (초당 ' + (1 / svCd()).toFixed(2) + '회) · 치명 ' + Math.round(Math.min(1, critChance()) * 100) + '% ×' + critMul().toFixed(1) + ' · 범위 ' + svR() + (svFarNow() ? ' · 사거리 ' + svFarNow() : '') + ' · 음수도 됨(약화)' }));
       // cards
       P.append(el('h3', { textContent: '전투 카드 · 융합' }));
       const cg = el('div', { className: 'grid' }); Object.keys(SVC).forEach(k => { const ok = SVC[k][3](), i = num(B.sk[k] || 0, 0, SVC[k][1]); i.disabled = !ok; i.onchange = () => { const v = clamp(+i.value | 0, 0, SVC[k][1]); if(v) B.sk[k] = v; else delete B.sk[k]; };

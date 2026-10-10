@@ -1576,7 +1576,7 @@ function classRules(line, fresh = false){
 }
 const ATK_R = Object.fromEntries(Object.keys(WL).map(l => [l, classRules(l).atk]));
 const br = () => { if(!B.rules || B.rulesLine !== B.line){ B.rules = classRules(B.line); B.rulesLine = B.line; } return B.rules; };
-const classHp = (lv, line) => 100 + Math.min(lv, 30) * 5 + en('time') * 15 + classRules(line).hp;
+const classHp = (lv, line) => 100 + lv * 5 + en('time') * 15 + classRules(line).hp;
 const hasCard = k => br().cards.includes(k);
 function validateClassRules(){
   const errors = [], finite = (l, key, v) => { if(typeof v !== 'number' || !Number.isFinite(v)) errors.push(l + ': ' + key + ' must be finite'); };
@@ -2800,8 +2800,8 @@ const svMotion = t => Math.min(t, br().cd * .9) / bucket(svAspd()); // the swing
 const hitSfx = () => { if(B.t - (B.sfxT ?? -1) >= .05){ B.sfxT = B.t; SFX.hit(); } }; // very fast attacks: one swish per 0.05s
 // 범위 +% (one stat): hit size takes it whole, ranged reach (casting / throwing distance) takes it × farK
 const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCard ? sk(r.reachCard[0]) * r.reachCard[1] : 0) + (r.stormReach && tr('g_storm') ? .25 : 0) + (TST ? TST.reach : 0); };
-const svR = () => { const r = br(); return Math.round((r.reach + Math.min(S.lv, 30) * r.reachLv) * bucket(svRangeAdd())); };
-const svFar = (base, lv) => Math.round((base + Math.min(S.lv, 30) * lv) * bucket(svRangeAdd() * br().farK + (TST ? TST.far : 0)));
+const svR = () => { const r = br(); return Math.round((r.reach + S.lv * r.reachLv) * bucket(svRangeAdd())); };
+const svFar = (base, lv) => Math.round((base + S.lv * lv) * bucket(svRangeAdd() * br().farK + (TST ? TST.far : 0)));
 const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
 function svLayout(){ SV.y0 = 46; SV.h = FH - 46; SV.ww = Math.max(900, FW + 160); SV.wh = Math.max(700, FH + 160); }
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.

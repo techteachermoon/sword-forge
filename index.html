@@ -2828,7 +2828,7 @@ const svRangeAdd = () => { const r = br(); return sk('reach') * .15 + (r.reachCa
 const svR = () => { const r = br(); return Math.round((r.reach + S.lv * r.reachLv) * bucket(svRangeAdd())); };
 const svFar = (base, lv) => Math.round((base + S.lv * lv) * bucket(svRangeAdd() * br().farK));
 const svFarNow = () => { const r = br(); return r.attack === 'throw' ? svFar(r.throwRange, r.throwLv) : r.attack === 'cast' ? svFar(r.castRange, r.castLv) : 0; };
-function svLayout(){ SV.y0 = 46; SV.h = FH / BS - 46; SV.ww = 1013; SV.wh = 700; } // one map for every mode and device (같이 하기 shares it); the old PC size
+function svLayout(){ SV.y0 = 46; SV.sy = curMode() === 'm' ? 0 : 46; SV.h = FH / BS - SV.sy; SV.ww = 1013; SV.wh = 700; } // one map for every mode and device (같이 하기 shares it); the old PC size
 // stage length (seconds of fighting): quick early areas, long immersive late ones. Kills push the bar faster.
 const ST_LEN = [19, 30, 54, 80, 108, 150]; // 지옥 6지역 ≈ 6~8분, the first two areas fly by
 const EARLY = [.65, .82, 1, 1, 1, 1]; // the first areas: softer monsters that hit lighter
@@ -2961,6 +2961,44 @@ function dmTotals(x, y){ const D = (B && B.dsrc) || {}; let a = 0, b = 0; for(co
   T('총 ' + fmtK(Math.round(a)) + '  ·  잡몹 ' + fmtK(Math.round(a - b)) + '  ·  보스 ' + fmtK(Math.round(b)), x, y, { f: 's', c: COL.gold, ol: COL.ink }); }
 function dmPanel(x, y, w, h, id){ // the full table (pause menu, results)
   dmTotals(x + 6, y + 4); dmTabs(x + 6, y + 18, w - 12, id); dmList(x + 6, y + 36, w - 12, Math.floor((h - 40) / 24), true); }
+// ---- 모바일 HUD: see-through corners instead of strips, so a narrow field stays open
+function mobPlate(x, y, w, h){ g.globalAlpha = .58; R(x, y, w, h, '#0c0807'); g.globalAlpha = 1; R(x + 1, y, w - 2, 1, '#4a3424'); R(x + 1, y + h, w - 2, 1, COL.ink); }
+function mobKey(x, y, w, h, fill, edge, lit){ // a chunky pixel key: ink rim, cut corners, a lit top row
+  R(x + 2, y, w - 4, h, COL.ink); R(x, y + 2, w, h - 4, COL.ink); R(x + 1, y + 1, w - 2, h - 2, COL.ink);
+  R(x + 2, y + 1, w - 4, h - 2, fill); R(x + 1, y + 2, w - 2, h - 4, fill); R(x + 2, y + h - 3, w - 4, 2, edge); R(x + 3, y + 2, w - 6, 1, lit);
+}
+function mobHud(PL, full){
+  const A = AREAS[B.ai], live = !B.over && !B.pick && !B.paused;
+  // top left: where, and for how long
+  { const t1 = B.endless ? '무한 도전 ' + B.n + '층' + (B.boss ? ' · 보스' : '') : A.name + ' ' + stLabel(B.s) + (B.boss ? ' · 보스' : ''),
+      t2 = B.endless ? fmt(B.score) + '점 · ' + fmtT(B.t) : dif()[0] + ' · ' + fmtT(B.t) + ' · ' + fmt(B.gold || 0) + 'G', w = Math.max(tw(t1, 's'), tw(t2, 's')) + 13;
+    mobPlate(3, 6, w, 25); R(3, 7, 2, 23, B.boss ? '#ff5a4a' : COL.ember);
+    T(t1, 9, 8, { f: 's', c: B.boss ? '#ff8a6a' : COL.text }); T(t2, 9, 19, { f: 's', c: COL.dim }); }
+  // top right: pause
+  { const pr = pressedOn('pz'), px = VW - 24, py = 7; mobPlate(px, py, 21, 21); R(px + 6, py + 5 + (pr ? 1 : 0), 3, 11, COL.text); R(px + 12, py + 5 + (pr ? 1 : 0), 3, 11, COL.text); if(!B.over && !B.pick) hit('pz', px - 6, py - 6, 33, 33, () => svPause()); }
+  // bottom left: life and the special gauge
+  { const hk = B.ouch ? 1 - B.ouch.t / .45 : 0, bw = 96, bx = 9 + (hk > .5 ? Math.round((Math.random() - .5) * 3) : 0), by = VH - 24, low = PL.hp < PL.max * .35;
+    const pct = B.boss ? (B.bossOut ? '보스를 쓰러뜨려라' : '보스가 다가온다') : B.endless ? '다음 층까지 ' + Math.max(0, Math.ceil(B.need - B.pr)) + '마리' : '돌파 ' + Math.min(99, Math.floor(B.pr / B.need * 100)) + '%' + ((B.okAvg || 1) >= 3 ? ' · 압도' : '');
+    T(pct, 6, VH - 42, { f: 's', c: B.boss ? '#ff8a6a' : COL.text, ol: COL.ink });
+    mobPlate(3, VH - 30, bw + 12, 27);
+    bar(bx, by, bw, 8, PL.hp / PL.max, low ? '#ff5a3a' : '#4ab04a');
+    if(B.hpLag > PL.hp){ const a = Math.round(bw * PL.hp / PL.max), b2 = Math.round(bw * B.hpLag / PL.max); R(bx + a, by, b2 - a, 8, hk > 0 ? '#ffffff' : '#ffd0c0'); }
+    if(hk > 0){ g.globalAlpha = hk; R(bx - 2, by - 2, bw + 4, 1, '#ff3a2a'); R(bx - 2, by + 9, bw + 4, 1, '#ff3a2a'); g.globalAlpha = 1; }
+    T(String(Math.ceil(PL.hp)), bx + bw / 2, by - 1, { f: 's', a: 'c', c: '#ffffff', ol: COL.ink });
+    bar(bx, by + 13, bw, 3, B.fev / 100, full ? (Math.sin(G.t * 10) > 0 ? '#ffe070' : '#ff9a3a') : '#c8902a'); }
+  // bottom right: 구르기 (one pip a charge) and 필살기
+  { const dw = 46, dh = 38, dx = VW - dw - 4, dyy = VH - dh - 4, ok = live && B.dashCh > 0, pr = pressedOn('dash') ? 1 : 0;
+    mobKey(dx, dyy + pr, dw, dh, ok ? '#c9562a' : '#4a3a2e', ok ? '#8a3418' : '#2e241c', ok ? '#ffb07a' : '#6a5a4a');
+    T(br().dash === 'blink' ? '점멸' : '구르기', dx + dw / 2, dyy + 9 + pr, { f: 's', a: 'c', c: ok ? '#fff2e0' : COL.dim });
+    const n = Math.max(1, B.dashMax), pw = 5, gap = 3, px0 = Math.round(dx + dw / 2 - (n * pw + (n - 1) * gap) / 2);
+    for(let i = 0; i < n; i++){ const on = i < B.dashCh; R(px0 + i * (pw + gap), dyy + 24 + pr, pw, 4, COL.ink); R(px0 + i * (pw + gap), dyy + 24 + pr, pw, 3, on ? '#ffe9b0' : '#5a4636'); }
+    if(B.dashCh < B.dashMax) T(B.dashCd.toFixed(1), dx + dw - 4, dyy - 9, { f: 's', a: 'r', c: COL.dim, ol: COL.ink });
+    if(live) hit('dash', dx - 4, dyy - 4, dw + 8, dh + 8, () => svDash());
+    const fw = 34, fh = 28, fx = dx - fw - 6, fy = VH - fh - 4, fpr = pressedOn('fever') ? 1 : 0, glow = full && Math.sin(G.t * 10) > 0;
+    mobKey(fx, fy + fpr, fw, fh, full ? (glow ? '#ffd24a' : '#e0a030') : '#3a2e24', full ? '#a8701a' : '#261e18', full ? '#fff2b0' : '#55463a');
+    T('필살', fx + fw / 2, fy + 9 + fpr, { f: 's', a: 'c', c: full ? '#2a1a08' : COL.faint });
+    if(live && full && !B.dead) hit('fever', fx - 3, fy - 3, fw + 6, fh + 6, () => svFever()); }
+}
 function dmWidget(vy){ // a small see-through table in the corner, folds to one tab
   const open = S.opts.dmw, y = vy + (B.mp ? 38 : 32);
   if(!open){ const lb = '딜량 ▾', bw = tw(lb, 's') + 10, x = VW - bw - 4; g.globalAlpha = .5; R(x, y, bw, 13, '#000'); g.globalAlpha = 1; T(lb, x + bw / 2, y + 1, { f: 's', a: 'c', c: COL.dim, ol: COL.ink }); hit('dmw', x - 4, y - 3, bw + 8, 19, () => { S.opts.dmw = 1; save(); SFX.click(); }); return; }
@@ -3450,7 +3488,8 @@ function heroDraw(x, y, t, o){ // a little smith: apron in the weapon's color, l
 function survDraw(dt){
   svLayout();
   R(0, 26, VW, VH - 26, '#100a08');
-  const A = AREAS[B.ai], PL = B.P, vy = SV.y0, vh = SV.h;
+  const A = AREAS[B.ai], PL = B.P, vy = SV.sy, vh = SV.h, wy = SV.y0, shY = vy - wy, mob = curMode() === 'm'; // vy: field top on screen, wy: field top in world space
+  if(!mob){
   T(B.endless ? '무한 도전 ' + B.n + '층' + (B.boss ? ' 보스' : '') : A.name + ' ' + stLabel(B.s) + (B.boss ? ' 보스' : ''), 8, 30, { f: 'b', c: B.boss ? COL.bad : B.endless ? '#ffd27a' : COL.text });
   { const pr = pressedOn('pz'), px = VW - 22; R(px, 28, 18, 15, COL.ink); R(px + 1, 29, 16, 13, '#3a281c'); R(px + 5, 31 + (pr ? 1 : 0), 3, 9, COL.text); R(px + 10, 31 + (pr ? 1 : 0), 3, 9, COL.text); if(!B.over && !B.pick) hit('pz', px - 4, 26, 26, 20, () => svPause()); }
   if(B.endless){ const rt = '점수 ' + fmt(B.score) + ' · ' + fmtT(B.t); T(rt, VW - 28, 31, { f: 's', a: 'r', c: COL.gold });
@@ -3458,11 +3497,12 @@ function survDraw(dt){
   else {
   T(dif()[0], VW - 28 - tw('원정 ' + (B.cleared + 1) + '번째 · 0:00', 's') - 8, 31, { f: 's', a: 'r', c: dif()[1] });
   T('원정 ' + (B.cleared + 1) + '번째 · ' + Math.floor(B.t / 60) + ':' + String(Math.floor(B.t % 60)).padStart(2, '0'), VW - 28, 31, { f: 's', a: 'r', c: COL.dim }); }
+  }
   g.save(); g.beginPath(); g.rect(0, vy, VW, vh); g.clip();
   const sh = G.shake > .3 ? [Math.round((Math.random() - .5) * G.shake * 2), Math.round((Math.random() - .5) * G.shake * 2)] : [0, 0];
   const cm = svCam();
-  g.translate(sh[0] - cm.x, sh[1] - cm.y);
-  g.drawImage(worldBG(B.ai), 0, vy);
+  g.translate(sh[0] - cm.x, sh[1] - cm.y + shY);
+  g.drawImage(worldBG(B.ai), 0, wy);
   for(const dc of GQ() ? B.decals || [] : []){ g.globalAlpha = Math.min(1, dc.t / 3) * .55; R(Math.round(dc.x - dc.r), Math.round(dc.y - 1), Math.round(dc.r * 2), 2, dc.c); R(Math.round(dc.x - dc.r * .6), Math.round(dc.y - 2), Math.round(dc.r * 1.2), 4, dc.c); P(dc.x + dc.r + 1, dc.y - 2, dc.c); P(dc.x - dc.r - 2, dc.y + 1, dc.c); }
   g.globalAlpha = 1;
   for(const f of B.fires){ g.globalAlpha = f.t * 2; R(f.x - 2, f.y - 1, 4, 3, '#ff7a2a'); P(f.x, f.y - 2, '#fff2a0'); g.globalAlpha = 1; }
@@ -3546,7 +3586,7 @@ function survDraw(dt){
     if(k < .3 && GQ()){ const cr = b.r * (.25 + k * 1.2); g.globalAlpha = (.3 - k) * 2.6; for(let yy = -cr; yy <= cr; yy += 1){ const ww = Math.round(Math.sqrt(Math.max(0, cr * cr - yy * yy))); R(b.x - ww, b.y + yy * (b.quake ? .6 : 1), ww * 2, 1, k < .12 ? '#ffffff' : '#fff2c0'); } }
     g.globalAlpha = (1 - k) * .6; if(GQ()) for(let a = 0; a < 40; a++){ const an = a / 40 * 6.28 + k; P(b.x + Math.cos(an) * r * 1.18, b.y + Math.sin(an) * r * 1.18 * (b.quake ? .6 : 1), bc); }
     g.globalAlpha = 1 - k; for(let a = 0; a < 56; a++){ const an = a / 56 * 6.28; P(b.x + Math.cos(an) * r, b.y + Math.sin(an) * r * (b.quake ? .6 : 1), b.quake ? '#c8a070' : b.magic ? B.wcol : '#ff9a3a'); } if(b.magic && k < .4){ g.globalAlpha = (.4 - k) * 1.5; for(let yy = -r; yy <= r; yy += 2){ const ww = Math.round(Math.sqrt(r * r - yy * yy)); R(b.x - ww, b.y + yy, ww * 2, 1, B.wcol); } } g.globalAlpha = 1; }
-  if(GQ()) for(const p of B.pillars){ const k = p.t / .35, top = vy + cm.y; if(k >= 1) continue; // seven pixel frames: the beam drops, holds, thins to a thread; the ground flashes and rings
+  if(GQ()) for(const p of B.pillars){ const k = p.t / .35, top = wy + cm.y; if(k >= 1) continue; // seven pixel frames: the beam drops, holds, thins to a thread; the ground flashes and rings
     if(!p.sp){ p.sp = 1; for(let i = 0; i < (GQ() === 2 ? 6 : 3); i++) G.parts.push({ x: p.x + (Math.random() - .5) * 10, y: p.y - Math.random() * 3, vx: 0, vy: -40 - Math.random() * 40, life: .35 + Math.random() * .25, max: .6, c: '#ffe38a', grav: 0, gl: 1 }); }
     const f = Math.min(6, Math.floor(k * 7)), wd = [2, 5, 5, 4, 3, 2, 1][f], bot = f === 0 ? top + (p.y - top) * .6 : p.y, px = Math.round(p.x), hh = Math.round(bot - top);
     if(wd > 1){ g.globalAlpha = .45; R(px - wd - 2, top, 2, hh, '#ffc85a'); R(px + wd, top, 2, hh, '#ffc85a'); g.globalAlpha = 1; }
@@ -3554,7 +3594,7 @@ function survDraw(dt){
     if(f >= 1){ if(f <= 2){ ell(px, p.y, 10 - f * 2, (10 - f * 2) * .35, '#fff3b0'); R(px - 14 + f * 3, p.y, 28 - f * 6, 1, '#ffffff'); }
       ellS(px, p.y, 6 + f * 4, (6 + f * 4) * .35, 1, '#ffe38a', f >= 5); }
   }
-  else for(const p of B.pillars){ const k = p.t / .35, top = vy + cm.y; g.globalAlpha = (1 - k) * .7; for(let a = 0; a < 28; a++){ const an = a / 28 * 6.28; P(p.x + Math.cos(an) * (8 + k * 18), p.y + Math.sin(an) * (4 + k * 8), '#fff3b0'); } g.globalAlpha = (1 - k) * .3; R(p.x - 8 + k * 4, top, 16 - k * 8, p.y - top, '#fff3b0'); g.globalAlpha = 1 - k; R(p.x - 4 + k * 2, top, 8 - k * 4, p.y - top, '#fff3b0'); R(p.x - 1, top, 2, p.y - top, '#ffffff'); g.globalAlpha = 1; }
+  else for(const p of B.pillars){ const k = p.t / .35, top = wy + cm.y; g.globalAlpha = (1 - k) * .7; for(let a = 0; a < 28; a++){ const an = a / 28 * 6.28; P(p.x + Math.cos(an) * (8 + k * 18), p.y + Math.sin(an) * (4 + k * 8), '#fff3b0'); } g.globalAlpha = (1 - k) * .3; R(p.x - 8 + k * 4, top, 16 - k * 8, p.y - top, '#fff3b0'); g.globalAlpha = 1 - k; R(p.x - 4 + k * 2, top, 8 - k * 4, p.y - top, '#fff3b0'); R(p.x - 1, top, 2, p.y - top, '#ffffff'); g.globalAlpha = 1; }
   /* lightning: native strokes (the pixel polygon fill cost hundreds of fillRects per bolt) */
   if(B.bolts.length){ g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
     if(GQ()) for(const b of B.bolts){ const k = b.t / .35; if(k >= 1) continue; const fr = Math.floor(G.t * 30); // pixel lightning: forked, re-drawn every other frame, flickers out
@@ -3582,16 +3622,16 @@ function survDraw(dt){
     for(let r = 1; r <= L; r++){ const c2 = r < 3 ? '#ffffff' : h.c; P(h.x + r, h.y, c2); P(h.x - r, h.y, c2); if(r < L * .7){ P(h.x, h.y + r, c2); P(h.x, h.y - r, c2); } }
     if(h.crit) for(let i = 0; i < 4; i++){ const an = h.a + i * 1.57 + .78; for(let r = 3; r < L + 3; r++) P(h.x + Math.cos(an) * r, h.y + Math.sin(an) * r, '#ffe070'); }
     g.globalAlpha = 1; }
-  if(B.clearFx != null){ const k = B.clearFx / .9; g.globalAlpha = (1 - k) * .55; R(PL.x - 7 * (1 - k), vy + cm.y, 14 * (1 - k), PL.y - vy - cm.y, '#fff6d0'); g.globalAlpha = 1 - k; for(let a = 0; a < 64; a++){ const an = a / 64 * 6.28; P(PL.x + Math.cos(an) * (16 + k * 150), PL.y - 2 + Math.sin(an) * (12 + k * 110), a % 2 ? '#ffd27a' : '#ffffff'); } g.globalAlpha = 1; }
+  if(B.clearFx != null){ const k = B.clearFx / .9; g.globalAlpha = (1 - k) * .55; R(PL.x - 7 * (1 - k), wy + cm.y, 14 * (1 - k), PL.y - wy - cm.y, '#fff6d0'); g.globalAlpha = 1 - k; for(let a = 0; a < 64; a++){ const an = a / 64 * 6.28; P(PL.x + Math.cos(an) * (16 + k * 150), PL.y - 2 + Math.sin(an) * (12 + k * 110), a % 2 ? '#ffd27a' : '#ffffff'); } g.globalAlpha = 1; }
   if(B.bossFx){ const bf = B.bossFx, k = bf.t / 1.2; g.globalAlpha = (1 - k) * .8; for(let a = 0; a < 72; a++){ const an = a / 72 * 6.28; P(bf.x + Math.cos(an) * (10 + k * 260), bf.y + Math.sin(an) * (8 + k * 200), a % 3 ? '#ff5a4a' : '#ffd27a'); } g.globalAlpha = 1; }
   drawParts(dt);
   const dm = dmgMode();
   { let extra = B.nums.length - [30, 60, 120][GQ()]; if(extra > 0) B.nums = B.nums.filter(n => !(n.dn && extra-- > 0)); } /* oldest damage numbers go first */
   for(const n of B.nums){ if(n.t < 0 || (n.dn && (dm === 'off' || (dm === 'crit' && !n.crit)))) continue; g.globalAlpha = clamp(((n.big ? 1.8 : .8) - n.t) / .25, 0, 1); const ny = n.y - (n.t < .1 ? (.1 - n.t) * 40 : 0), nz = n.big || (n.crit && n.t < .12) ? 2 : 1, nw = T(n.v, n.x, ny, { f: n.small ? 's' : 'b', z: nz, a: 'c', c: n.c || '#ffffff', ol: COL.ink }); if(n.ci) ic('crit', Math.round(n.x - nw / 2 - 10 * nz + 1), Math.round(ny + (nz > 1 ? 4 : 1)), nz); }
   g.globalAlpha = 1;
-  g.translate(cm.x, cm.y); // back to screen space for the overlay
+  g.translate(cm.x, cm.y - shY); // back to screen space for the overlay
   if(B.joy){ g.globalAlpha = .35; for(let a = 0; a < 32; a++){ const an = a / 32 * 6.28; P(B.joy.sx + Math.cos(an) * 22, B.joy.sy + Math.sin(an) * 22, '#ffffff'); } const dx = B.joy.x - B.joy.sx, dy = B.joy.y - B.joy.sy, d = Math.hypot(dx, dy), k = d > 22 ? 22 / d : 1; R(B.joy.sx + dx * k - 3, B.joy.sy + dy * k - 3, 6, 6, '#ffffff'); g.globalAlpha = 1; }
-  { const bm = B.mons.find(m => m.kind === 'boss' && m.die === 0); if(bm){ const sx = bm.x - cm.x, sy = bm.y - cm.y; if(sx < 0 || sx > VW || sy < vy || sy > vy + vh){
+  { const bm = B.mons.find(m => m.kind === 'boss' && m.die === 0); if(bm){ const sx = bm.x - cm.x, sy = bm.y - cm.y + shY; if(sx < 0 || sx > VW || sy < vy || sy > vy + vh){
     // boss off screen: a red arrow on the edge pointing at it, with its distance
     const cx = VW / 2, cy = vy + vh / 2, a = Math.atan2(sy - cy, sx - cx), m = 18, kx = Math.abs(Math.cos(a)) > 1e-3 ? (VW / 2 - m) / Math.abs(Math.cos(a)) : 1e9, ky = Math.abs(Math.sin(a)) > 1e-3 ? (vh / 2 - m - 26) / Math.abs(Math.sin(a)) : 1e9, d = Math.min(kx, ky);
     const ex = cx + Math.cos(a) * d, ey = cy + Math.sin(a) * d, pulse = 1 + .15 * Math.sin(G.t * 10), sz = 9 * pulse;
@@ -3601,9 +3641,9 @@ function survDraw(dt){
   { const bm = B.mons.find(m => m.kind === 'boss' && m.die === 0); if(bm){ T(bm.name, VW / 2, vy + 8, { f: 'b', a: 'c', c: '#ff7a6a', ol: COL.ink }); bar(Math.round(VW / 2 - 100), vy + 22, 200, 5, bm.hp / bm.max, '#d8402e'); } }
   // xp bar along the top of the arena
   R(0, vy, VW, 4, COL.ink); R(0, vy, Math.round(VW * (B.boss ? 0 : Math.min(1, B.pr / B.need))), 3, '#e0b040');
-  T(B.endless ? '카드 ' + (B.lv - 1) + '장 · 적 방어 ' + enArm(B.n) + ' (−' + Math.round((1 - armF(enArm(B.n))) * 100) + '%)' + (B.tr ? ' · ' + ENT[B.tr][0] : '') + (B.mp ? ' · ' + MP.party + '번 방 ' + mpN() + '명' + (MP.host ? ' ★' : '') : '') : 'Lv ' + B.lv + (B.run > 1 ? ' · 연속 ' + B.run + '판' : ''), 4, vy + 5, { f: 's', c: '#bfe0ff', ol: COL.ink });
-  if(B.combo >= 10) T(B.combo + ' 처치 연속', VW - 4, vy + 5, { f: 's', a: 'r', c: B.combo >= 50 ? '#ffe070' : COL.text, ol: COL.ink });
-  const fz = Object.keys(B.fus); if(fz.length) T(fz.map(f => FUS[f][0]).join(' · '), 4, vy + 17, { f: 's', c: '#ffd27a', ol: COL.ink });
+  T(B.endless ? '카드 ' + (B.lv - 1) + '장 · 적 방어 ' + enArm(B.n) + ' (−' + Math.round((1 - armF(enArm(B.n))) * 100) + '%)' + (B.tr ? ' · ' + ENT[B.tr][0] : '') + (B.mp ? ' · ' + MP.party + '번 방 ' + mpN() + '명' + (MP.host ? ' ★' : '') : '') : 'Lv ' + B.lv + (B.run > 1 ? ' · 연속 ' + B.run + '판' : ''), 4, vy + (mob ? 34 : 5), { f: 's', c: '#bfe0ff', ol: COL.ink });
+  if(B.combo >= 10) T(B.combo + ' 처치 연속', VW - 4, vy + (mob ? 34 : 5), { f: 's', a: 'r', c: B.combo >= 50 ? '#ffe070' : COL.text, ol: COL.ink });
+  const fz = Object.keys(B.fus); if(fz.length) T(fz.map(f => FUS[f][0]).join(' · '), 4, vy + (mob ? 46 : 17), { f: 's', c: '#ffd27a', ol: COL.ink });
   if(B.mp){ const my = vy + (fz.length ? 30 : 18); drawDmgMeter(4, my);
     // the last few quick-chat lines, under the party panel
     const log = (MP.chat || []).filter(m => G.t - m.at < 8), ly = my + (1 + Object.values(MP.peers).filter(o => G.t - o.seen < 5).length) * 12 + 16;
@@ -3620,13 +3660,14 @@ function survDraw(dt){
   if(B.dead && !B.over){ hit('bview', 0, vy, VW, vh, () => specNext()); { const o = specTarget(); T(o ? '관전 중: ' + (badName(o.nm) ? '친구' : o.nm) + ' · 누르면 다음 친구' : '남은 친구가 없다', VW / 2, vy + vh - 120, { f: 'b', a: 'c', c: '#bfe0ff', ol: COL.ink }); } }
   else if(!B.over && !B.pick && !B.paused) hit('bview', 0, vy, VW, vh, null, { onDown: (x, y) => { if(G.t - B.lastDown < .28 || (B.dashCh > 0 && G.t - (B.lastDash || -9) < .35)) svDash(); B.lastDown = G.t; B.joy = { sx: x, sy: y, x, y }; }, onMove: (x, y) => { if(B.joy){ B.joy.x = x; B.joy.y = y; } }, onUp: () => { B.joy = null; } });
   // ---- HUD strip over the bottom of the battlefield (two rows on a narrow screen)
-  const compact = VW < 480, sh2 = compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
-  if(!B.over && !B.pick && !B.paused) dmWidget(vy);
+  const compact = VW < 480, sh2 = mob ? 46 : compact ? 76 : 44, sy0 = VH - sh2, full = B.fev >= 100;
+  if(!B.over && !B.pick && !B.paused) dmWidget(vy + (mob ? 2 : 0));
   if(B.mp && !B.over) button('chat', VW - 62, vy + 18, 58, 16, G.chatOpen ? '닫기' : '말하기 · V', null, () => { G.chatOpen = !G.chatOpen; }, { small: true, kind: G.chatOpen ? 'gold' : 'normal' }); /* registered after the field so a tap here never grabs the stick */
   if(B.mp && G.chatOpen && !B.over){ const cw = Math.min(86, Math.floor((VW - 12) / 3) - 4), cx0 = Math.round((VW - (cw + 4) * 3 + 4) / 2); QCHAT.forEach((t, i) => button('qc' + i, cx0 + (i % 3) * (cw + 4), sy0 - 78 + Math.floor(i / 3) * 24, cw, 21, t, null, () => { mpSay(i); G.chatOpen = false; }, { small: true, kind: 'blue' }));
     button('qct', cx0, sy0 - 102, (cw + 4) * 3 - 4, 21, '직접 입력하기 (Enter)', null, () => { G.chatOpen = false; chatInput(); }, { small: true, kind: 'gold' }); }
-  g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
   B.hpLag = Math.max(PL.hp, Math.min(B.hpLag == null ? PL.hp : B.hpLag, PL.max) - PL.max * .5 * dt * (B.ouch ? 0 : 1)); // the part just lost lingers in white, then drains
+  if(mob) mobHud(PL, full); else {
+  g.globalAlpha = .62; R(0, sy0, VW, sh2, '#0c0807'); g.globalAlpha = 1; R(0, sy0, VW, 1, '#3a281c');
   { const hk = B.ouch ? 1 - B.ouch.t / .45 : 0, bx = 36 + (hk > .5 ? Math.round((Math.random() - .5) * 3) : 0);
   T('체력', 8, sy0 + 5, { f: 's', c: hk > 0 ? '#ff5a4a' : COL.dim }); bar(bx, sy0 + 7, 120, 7, PL.hp / PL.max, PL.hp < PL.max * .35 ? '#ff5a3a' : '#4ab04a');
   if(B.hpLag > PL.hp){ const a = Math.round(120 * PL.hp / PL.max), b = Math.round(120 * B.hpLag / PL.max); R(bx + a, sy0 + 7, b - a, 7, hk > 0 ? '#ffffff' : '#ffd0c0'); }
@@ -3641,6 +3682,7 @@ function survDraw(dt){
     bx -= fw + 4; button('fever', bx, rowY, fw, 30, '필살기', 'F 키', () => svFever(), { kind: 'gold', dis: !full || !!B.over || !!B.dead || !!B.paused || !!B.pick, small: true });
     { const on = !!S.opts.bossT; bx -= ow + 4; button('bossT', bx, rowY, ow, 30, on ? '보스 ON' : '보스 OFF', '우선 · E', () => toggleBossT(), { kind: on ? 'danger' : 'normal', dis: !!B.over, small: true }); }
     bx -= rw + 4; button('retreat', bx, rowY, rw, 30, '귀환', null, () => svEnd(), { dis: !!B.over, small: true }); }
+  }
   if(B.cleared === 0 && B.st < 10 && !B.pick && !G.chatOpen){ const hl = wrap('끌어서 이동 · 두 번 톡(스페이스)으로 구르기 · 무기는 알아서 휘두른다 · Esc 일시정지', 's', Math.min(VW - 20, 320)); hl.forEach((ln, k) => T(ln, VW / 2, sy0 - 14 - (hl.length - 1 - k) * 11, { f: 's', a: 'c', c: COL.text, ol: COL.ink })); }
   if(G.wheel) drawChatWheel();
   if(B.pick){ dim(0, 0, VW, VH, .35); centered(survPickDraw); }
@@ -3701,6 +3743,11 @@ function dmResult(x, y){ // 결과 화면: a 딜량표 button, and the table ove
   button('rdmx', 85, 406, 100, 26, '닫기', null, () => { B.dmShow = false; }, { small: true, kind: 'primary' });
 }
 function svPause(){ if(!B || !B.surv || B.over || B.pick) return; B.paused = !B.paused; B.joy = null; SFX.click(); if(B.paused) G.scroll.pause = { y: 0 }; }
+function pauseOut(){ // 귀환, and on 모바일 the 보스 우선 switch that has no strip button there
+  if(curMode() !== 'm'){ button('pz_out', 8, 438, 254, 30, '귀환 (원정 끝내기)', null, () => { B.paused = false; svEnd(); }, { kind: 'danger', small: true }); return; }
+  const on = !!S.opts.bossT; button('pz_out', 8, 438, 168, 30, '귀환 (원정 끝내기)', null, () => { B.paused = false; svEnd(); }, { kind: 'danger', small: true });
+  button('pz_boss', 180, 438, 82, 30, on ? '보스 우선 ON' : '보스 우선 OFF', null, () => toggleBossT(), { kind: on ? 'gold' : 'normal', small: true });
+}
 function survPauseDraw(){ // pause menu: the weapon, its enchants, elements and everything picked up this run
   dim(0, 26, VW, VH - 26, .78); hit('__block', 0, 0, VW, VH, null, { block: true });
   T(B.mp ? '메뉴' : '일시정지', VW / 2, 32, { f: 'b', z: 2, a: 'c', c: COL.gold, ol: COL.ink });
@@ -3708,7 +3755,7 @@ function survPauseDraw(){ // pause menu: the weapon, its enchants, elements and 
   button('pz_tab', 194, 28, 70, 20, B.pzDm ? '장비·카드' : '딜량표', null, () => { B.pzDm = !B.pzDm; }, { small: true, kind: B.pzDm ? 'normal' : 'gold' });
   if(B.pzDm){ panel(4, 56, 262, 344, 'dark'); dmPanel(6, 60, 258, 336, 'pzd');
     button('pz_go', 8, 406, 84, 26, '계속하기', null, () => svPause(), { kind: 'primary', small: true });
-    button('pz_out', 8, 438, 254, 30, '귀환 (원정 끝내기)', null, () => { B.paused = false; svEnd(); }, { kind: 'danger', small: true }); return; }
+    pauseOut(); return; }
   const id = B.wid, w = wepOf(id), W = WL[w.line], ci = clsInfo(w.line), fx = B.fx, rows = [];
   const head = (t, c) => rows.push({ h: 18, d: y => { R(10, y + 14, 250, 1, '#5a3e2a'); T(t, 10, y + 2, { f: 'b', c: c || COL.ember }); } });
   const line = (a, b, c) => { const ls = wrap(b, 's', 236); rows.push({ h: 12 + ls.length * 11 + 3, d: y => { T(a, 12, y, { f: 's', c: c || COL.text }); ls.forEach((ln, i) => T(ln, 18, y + 11 + i * 11, { f: 's', c: COL.dim })); } }); };
@@ -3740,7 +3787,7 @@ function survPauseDraw(){ // pause menu: the weapon, its enchants, elements and 
   button('pz_go', 8, 406, 84, 26, '계속하기', null, () => svPause(), { kind: 'primary', small: true });
   button('pz_gq', 96, 406, 84, 26, '그래픽 ' + GFXN[GQ()], null, () => gfxNext(), { small: true, kind: GQ() === 2 ? 'gold' : 'normal' });
   button('pz_fs', 184, 406, 78, 26, '전체 화면', null, () => toggleFS(), { small: true });
-  button('pz_out', 8, 438, 254, 30, '귀환 (원정 끝내기)', null, () => { B.paused = false; svEnd(); }, { kind: 'danger', small: true });
+  pauseOut();
 }
 function survPickDraw(){
   const pk = B.pick, age = G.t - pk.t0;
@@ -5006,7 +5053,7 @@ function loop(now){
   R(0, 0, FW, FH, '#0c0807'); US = 1; if(battle && BS > 1) g.scale(BS, BS);
   if(!battle){ drawBackdrop(); g.translate(OX, OY); }
   if(G.scr === 'title') drawTitle(dt);
-  else if(G.scr === 'battle'){ battleUpdate(dt); if(B) drawBattle(dt); drawHUD(); }
+  else if(G.scr === 'battle'){ battleUpdate(dt); if(B) drawBattle(dt); if(!(B && curMode() === 'm')) drawHUD(); }
   else {
     forgeUpdate(dt); dlgUpdate(dt);
     if(!G.modal && F.st === 'idle' && !G.reveal){ if(S.inhPend){ if(G.tab === 'forge') G.modal = { k: 'inherit', sel: [] }; } else if(needsJob()){ if(!G.rib){ G.tab = 'forge'; G.modal = { k: 'job', tier: needsJob() }; } } else if(S.enchPend > 0 && G.tab === 'forge') openEnch(); }
